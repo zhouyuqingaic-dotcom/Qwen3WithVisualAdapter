@@ -9,12 +9,12 @@ class Stage2TrainConfig:
 
     # --- 1. 基础与输出路径配置 ---
     # 自动将输出目录指向 Stage 2 专属文件夹
-    output_dir_with_visual_adapter: str = "/home/yuqing/Models/RouterB_Plus/Stage2_VQA_RAD/with_visual_adapter"
-    output_dir_lora_only_baseline: str = "/home/yuqing/Models/RouterB_Plus/Stage2_VQA_RAD/lora_only_baseline"
+    output_dir_with_visual_adapter: str = "/home/yuqing/Models/RouterB_Plus_Complex_Visual_Adapter/Stage2_VQA_RAD/with_visual_adapter"
+    output_dir_lora_only_baseline: str = "/home/yuqing/Models/RouterB_Plus_Complex_Visual_Adapter/Stage2_VQA_RAD/lora_only_baseline"
 
     # ⚠️ 继承 Stage 1 权重的根目录
-    stage1_weights_with_visual_adapter: str = "/home/yuqing/Models/RouterB_Plus/with_visual_adapter/final_weights"
-    stage1_weights_lora_only_baseline: str = "/home/yuqing/Models/RouterB_Plus/lora_only_baseline/final_weights"
+    stage1_weights_with_visual_adapter: str = "/home/yuqing/Models/RouterB_Plus_Complex_Visual_Adapter/with_visual_adapter/final_weights"
+    stage1_weights_lora_only_baseline: str = "/home/yuqing/Models/RouterB_Plus_Complex_Visual_Adapter/lora_only_baseline/final_weights"
 
     print_rank: int = 0
     seed: int = 1912
@@ -47,7 +47,6 @@ class Stage2TrainConfig:
     use_visual_adapter: bool = False  # Ablation 实验时改为 False
     visual_adapter_hidden_dim: int = 4096
     visual_adapter_r: int = 16
-    visual_adapter_alpha: float = 0.1
 
     # --- 5. 训练超参数 (针对 VQA-RAD 小数据集微调) ---
     per_device_train_batch_size: int = 4

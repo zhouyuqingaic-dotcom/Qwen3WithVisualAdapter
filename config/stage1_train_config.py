@@ -7,8 +7,8 @@ class TrainConfig:
     """阶段 (Train) 全局配置类"""
 
     # --- 1. 基础配置 ---
-    output_dir_with_visual_adapter: str = "/home/yuqing/Models/RouterB_Plus/with_visual_adapter"
-    output_dir_lora_only_baseline: str = "/home/yuqing/Models/RouterB_Plus/lora_only_baseline"
+    output_dir_with_visual_adapter: str = "/home/yuqing/Models/RouterB_Plus_Complex_Visual_Adapter/with_visual_adapter"
+    output_dir_lora_only_baseline: str = "/home/yuqing/Models/RouterB_Plus_Complex_Visual_Adapter/lora_only_baseline"
     print_rank: int = 0
     seed: int = 1912
 
@@ -92,7 +92,6 @@ class TrainConfig:
     use_visual_adapter: bool = True #跑仅lora时候False
     visual_adapter_hidden_dim: int = 4096  # Qwen3-VL-8B 探测出的真实视觉-语言对齐维度
     visual_adapter_r: int = 16
-    visual_adapter_alpha: float = 0.1
 
 
     def __post_init__(self):

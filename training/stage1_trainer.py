@@ -125,7 +125,6 @@ def main():
             gradient_checkpointing=cfg.gradient_checkpointing,
             visual_adapter_hidden_dim=cfg.visual_adapter_hidden_dim,
             visual_adapter_r=cfg.visual_adapter_r,
-            visual_adapter_alpha=cfg.visual_adapter_alpha
         )
     else:
         wrapper=Qwen3VLLoraWrapper(

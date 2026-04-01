@@ -75,7 +75,6 @@ class Qwen3VLLoraAndVisualAdapterWrapper:
             gradient_checkpointing,
             visual_adapter_hidden_dim=4096,
             visual_adapter_r=16,
-            visual_adapter_alpha=0.1,
     ):
         # 语言端 LoRA 超参数
         self.r = lora_r
@@ -87,7 +86,6 @@ class Qwen3VLLoraAndVisualAdapterWrapper:
         # 视觉端 Adapter 超参数
         self.visual_adapter_hidden_dim = visual_adapter_hidden_dim
         self.visual_adapter_r = visual_adapter_r
-        self.visual_adapter_alpha = visual_adapter_alpha
 
     def wrap(self, model: PreTrainedModel) -> PreTrainedModel:
         # =====================================================================
@@ -143,7 +141,6 @@ class Qwen3VLLoraAndVisualAdapterWrapper:
         vision_tower.res_adapter = Qwen3VLVisualAdapter(
             hidden_dim=hidden_dim,
             r=self.visual_adapter_r,
-            init_alpha=self.visual_adapter_alpha,
         ).to(device=ref_param.device, dtype=adapter_dtype)
 
         # 3.4 备份底座模型原生的前向传播逻辑
@@ -175,7 +172,7 @@ class Qwen3VLLoraAndVisualAdapterWrapper:
 
         print(
             f"✅ [Visual Adapter] 成功挂载！"
-            f" r={self.visual_adapter_r}, d={hidden_dim}, alpha={self.visual_adapter_alpha}"
+            f" r={self.visual_adapter_r}, d={hidden_dim} "
         )
 
         # =====================================================================

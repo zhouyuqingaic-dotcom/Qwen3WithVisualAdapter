@@ -70,7 +70,6 @@ def main():
         adapter = Qwen3VLVisualAdapter(
             hidden_dim=cfg.visual_adapter_hidden_dim,
             r=cfg.visual_adapter_r,
-            init_alpha=cfg.visual_adapter_alpha,
         ).to(device=ref_param.device, dtype=adapter_dtype)
 
         adapter_pt_path = os.path.join(weights_path, "visual_adapter.pt")

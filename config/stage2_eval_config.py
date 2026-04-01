@@ -11,8 +11,8 @@ class Stage2EvalConfig:
     use_visual_adapter: bool = True  # Ablation 实验时改为 False
 
     # 自动定位对应的 Stage 2 权重路径
-    stage2_weights_with_adapter: str = "/home/yuqing/Models/RouterB_Plus/Stage2_VQA_RAD/with_visual_adapter/final_weights"
-    stage2_weights_baseline: str = "/home/yuqing/Models/RouterB_Plus/Stage2_VQA_RAD/lora_only_baseline/final_weights"
+    stage2_weights_with_adapter: str = "/home/yuqing/Models/RouterB_Plus_Complex_Visual_Adapter/Stage2_VQA_RAD/with_visual_adapter/final_weights"
+    stage2_weights_baseline: str = "/home/yuqing/Models/RouterB_Plus_Complex_Visual_Adapter/Stage2_VQA_RAD/lora_only_baseline/final_weights"
 
     # --- 1. 任务协议与 Prompt ---
     vqa_rad_instruction_suffix: str = (
@@ -38,7 +38,6 @@ class Stage2EvalConfig:
     # --- 4. 视觉 Adapter 参数 (必须与训练时完全一致) ---
     visual_adapter_hidden_dim: int = 4096
     visual_adapter_r: int = 16
-    visual_adapter_alpha: float = 0.1
 
     # --- 5. 评测与生成参数 (Generation Config) ---
     max_new_tokens: int = 64
@@ -49,7 +48,7 @@ class Stage2EvalConfig:
 
     def __post_init__(self):
         # 评测结果输出目录也自动实现物理隔离
-        base_eval_dir = "/home/yuqing/Models/RouterB_Plus/eval_results_vqa_rad"
+        base_eval_dir = "/home/yuqing/Models/RouterB_Plus_Complex_Visual_Adapter/eval_results_vqa_rad"
         if self.use_visual_adapter:
             self.output_dir = os.path.join(base_eval_dir, "with_visual_adapter")
         else:
