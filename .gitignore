@@ -7,7 +7,6 @@ __pycache__/
 .idea/
 
 # Data and Weights (针对你的项目结构)
-datas/
 *.pth
 *.bin
 *.checkpoint
