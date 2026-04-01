@@ -1,0 +1,24 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE - PyCharm
+.idea/
+
+# Data and Weights (针对你的项目结构)
+datas/
+*.pth
+*.bin
+*.checkpoint
+checkpoint/
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Virtual Environment
+venv/
+.venv/
+env/
