@@ -52,15 +52,15 @@ class Stage2TrainConfig:
     # --- 5. 训练超参数 (针对 VQA-RAD 小数据集微调) ---
     per_device_train_batch_size: int = 4
     gradient_accumulation_steps: int = 2
-    num_train_epochs: float = 5.0  # VQA-RAD 数据量小，Epoch 适当拉大
+    num_train_epochs: float = 20.0  # VQA-RAD 数据量小，Epoch 适当拉大
     learning_rate: float = 1e-5  # 学习率比 Stage 1 略低，防止冲刷已有知识
     weight_decay: float = 0.01
     lr_scheduler_type: str = "cosine"
     warmup_steps: int = 50  # 相应缩短 warmup
     max_grad_norm: float = 1.0
     logging_steps: int = 10
-    save_steps: int = 200
-    save_total_limit: int = 2
+    save_steps: int = 200 # 每隔 200 步保存一次
+    save_total_limit: int = 500 #上限拉高，保存所有checkpoint
     gradient_checkpointing: bool = True
     dataloader_num_workers: int = 8
 

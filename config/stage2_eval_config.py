@@ -8,7 +8,7 @@ class Stage2EvalConfig:
     # =========================================================
     # ✨ 核心创新点开关：是否启用视觉残差适配器 (用于切换评测目标)
     # =========================================================
-    use_visual_adapter: bool = True  # Ablation 实验时改为 False
+    use_visual_adapter: bool = False  # Ablation 实验时改为 False
 
     # 自动定位对应的 Stage 2 权重路径
     stage2_weights_with_adapter: str = "/home/yuqing/Models/RouterB_Plus/Stage2_VQA_RAD/with_visual_adapter/final_weights"

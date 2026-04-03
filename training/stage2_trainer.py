@@ -12,6 +12,38 @@ from utils.data_tools.collator.vqa_rad_datasets_train_collator import VQARADTrai
 from utils.qwen3vl.qwen3_vl_8B_quant_loader import Qwen3VLQuantizedLoader
 from utils.qwen3vl.qwen3_vl_8B_visual_adapter import Qwen3VLVisualAdapter
 from utils.ddp.ddp_utils import ddp_print
+from transformers import TrainerCallback
+
+
+class VisualAdapterSaveCallback(TrainerCallback):
+    """
+    专属回调：在 HF Trainer 自动保存 checkpoint 时，强制将 Visual Adapter 权重一并保存！
+    支持模式感知：纯 LoRA 模式下自动静默跳过。
+    """
+
+    def __init__(self, use_visual_adapter: bool):
+        self.use_visual_adapter = use_visual_adapter
+
+    def on_save(self, args, state, control, **kwargs):
+        # 🚨 如果是纯 LoRA 模式，直接优雅跳过，绝不报错！
+        if not self.use_visual_adapter:
+            return
+
+        checkpoint_folder = os.path.join(args.output_dir, f"checkpoint-{state.global_step}")
+        model = kwargs["model"]
+
+        try:
+            # 兼容 DDP 和 PEFT 包装的取法
+            if hasattr(model, "module"):  # DDP wrapper
+                adapter_module = model.module.base_model.model.model.visual.res_adapter
+            else:
+                adapter_module = model.base_model.model.model.visual.res_adapter
+
+            adapter_save_path = os.path.join(checkpoint_folder, "visual_adapter.pt")
+            torch.save(adapter_module.state_dict(), adapter_save_path)
+            print(f"\n  [Callback] ✨ 视觉适配器权重已同步保存至: {adapter_save_path}")
+        except Exception as e:
+            print(f"\n  [Callback] ❌ 保存视觉适配器失败: {e}")
 
 def set_seed(seed: int):
     """
@@ -182,6 +214,8 @@ def main():
         args=training_args,
         train_dataset=train_dataset,
         data_collator=collator,
+        # 把大开关的状态传给保安，让他知道该不该查岗
+        callbacks=[VisualAdapterSaveCallback(use_visual_adapter=use_visual_adapter)], #需要教 Hugging Face 的 Trainer 在自动保存时，顺手把我们的 Visual Adapter 也存下来
     )
 
     trainer.train()
