@@ -7,8 +7,9 @@ class TrainConfig:
     """阶段 (Train) 全局配置类"""
 
     # --- 1. 基础配置 ---
-    output_dir_with_visual_adapter: str = "/home/yuqing/Models/RouterB_Plus/with_visual_adapter"
-    output_dir_lora_only_baseline: str = "/home/yuqing/Models/RouterB_Plus/lora_only_baseline"
+    output_dir_with_visual_adapter_dynamic: str = "/home/yuqing/Models/RouterB_Plus_MoA/with_visual_adapter_dynamic"
+    output_dir_with_visual_adapter_fixed: str = "/home/yuqing/Models/RouterB_Plus_MoA/with_visual_adapter_fixed"
+
     print_rank: int = 0
     seed: int = 1912
 
@@ -48,6 +49,11 @@ class TrainConfig:
     bnb_4bit_compute_dtype: str = "bfloat16"
     torch_dtype: str = "bfloat16"
     attn_implementation: str = "flash_attention_2"
+
+    # BioMedCLIP 本地绝对路径 (OpenCLIP 格式)
+    biomedclip_path: str = "/home/yuqing/Models/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224"
+    # 【新增】：明确指定架构名称，BiomedCLIP 基于 ViT-B-16
+    biomedclip_model_name: str = "ViT-B-16"
 
     # --- 4. LoRA 配置 ---
     lora_r: int = 64
@@ -89,12 +95,25 @@ class TrainConfig:
     # =========================================================
     # ✨ 核心创新点：视觉端 (Vision) 的残差适配器
     # =========================================================
-    use_visual_adapter: bool = True #跑仅lora时候False
     visual_adapter_hidden_dim: int = 4096  # Qwen3-VL-8B 探测出的真实视觉-语言对齐维度
     visual_adapter_r: int = 16
-    visual_adapter_alpha: float = 0.1
-
+    # 【新增】多尺度 Visual Adapter 与 Router 专属配置
+    # router_mode: str = "dynamic"  # 可选: "dynamic" 或 "fixed"
+    router_mode: str = "fixed"  # 可选: "dynamic" 或 "fixed"
+    global_adapter_kernel_size: int = 1
+    local_adapter_kernel_size: int = 3
+    region_adapter_kernel_size: int = 5
+    #  新增：当 router_mode="fixed" 时的硬融合比例
+    fixed_weights: list[float] = field(default_factory=lambda: [0.33, 0.33, 0.34])
 
     def __post_init__(self):
         if self.attn_implementation == "flash_attention_2" and self.torch_dtype != "bfloat16":
             print("⚠️ Warning: flash_attention_2 is best paired with bfloat16!")
+
+        # 🚀 根据 router_mode 直接绑定对应的输出绝对路径
+        if self.router_mode == "dynamic":
+            self.output_dir = self.output_dir_with_visual_adapter_dynamic
+        elif self.router_mode == "fixed":
+            self.output_dir = self.output_dir_with_visual_adapter_fixed
+        else:
+            raise ValueError(f"❌ 不支持的 router_mode: {self.router_mode}，只能是 'dynamic' 或 'fixed'")

@@ -40,6 +40,9 @@ class Stage2TrainConfig:
     torch_dtype: str = "bfloat16"
     attn_implementation: str = "flash_attention_2"
 
+    # BioMedCLIP 本地绝对路径 (OpenCLIP 格式)
+    biomedclip_path: str = "hf-hub:/home/yuqing/Models/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224"
+
     # --- 4. 视觉 Adapter 维度参数 (如果启用的话，需与 Stage1 保持绝对一致) ---
     # =========================================================
     # ✨ 核心创新点开关：是否启用视觉残差适配器

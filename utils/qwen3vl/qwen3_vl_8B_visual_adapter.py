@@ -2,63 +2,61 @@ import torch
 import torch.nn as nn
 
 
-class Qwen3VLVisualAdapter(nn.Module):
+class BasicVisualAdapter(nn.Module):
     """
-    Qwen3-VL 专属的视觉残差适配器 (Visual Residual Adapter)。
-
-    设计极度轻量：LayerNorm -> Linear(down) -> GELU -> Linear(up)
-    核心特性：最后一层 Linear(up) 零初始化，确保初始时刻网络处于“恒等映射” (Identity Mapping) 状态，
-    避免破坏预训练视觉特征导致初始 Loss 爆炸。
+    基本视觉适配器 (Single-Scale Expert Adapter)
+    通过改变 kernel_size 和 dilation 来控制该Adapter的“医学视野(感受野)”。
     """
 
-    def __init__(self, hidden_dim: int, r: int = 16, init_alpha: float = 0.1):
-        """
-        参数说明:
-        - hidden_dim: 视觉塔输出特征的维度 (例如 Qwen-VL 中通常是 3584)
-        - r: 瓶颈层的压缩倍率 (Reduction factor)，控制 Adapter 的参数量
-        - init_alpha: 残差连接的可学习缩放因子的初始值
-        """
+    def __init__(self, hidden_dim: int, r: int = 16, kernel_size: int = 1, dilation: int = 1):
         super().__init__()
-        self.hidden_dim = hidden_dim
-        self.r = r
-
-        # 1. 归一化层，保证输入瓶颈层的特征分布稳定
-        self.norm = nn.LayerNorm(hidden_dim)
-
-        # 2. 降维投影层 (Bottleneck Down)
-        # 不使用 bias 可以进一步减少参数量，符合轻量化微调的原则
         self.down = nn.Linear(hidden_dim, hidden_dim // r, bias=False)
-
-        # 3. 激活函数
         self.act = nn.GELU()
-
-        # 4. 升维投影层 (Bottleneck Up)
         self.up = nn.Linear(hidden_dim // r, hidden_dim, bias=False)
 
-        # 5. 可学习的残差缩放因子
-        # 初始给一个较小的值 (如 0.1)，让模型在前期主要依赖原始特征，慢慢学会利用新特征
-        self.alpha = nn.Parameter(torch.tensor(init_alpha, dtype=torch.float32))
+        self.use_conv = (kernel_size > 1)
+        if self.use_conv:
+            # 动态计算 padding，保证 1D 卷积后序列长度严格不变
+            padding = (kernel_size - 1) * dilation // 2
+            self.conv = nn.Conv1d(
+                in_channels=hidden_dim // r,
+                out_channels=hidden_dim // r,
+                kernel_size=kernel_size,
+                padding=padding,
+                dilation=dilation,
+                groups=hidden_dim // r,  # 深度可分离，极致轻量
+                bias=False
+            )
 
-        # ✨ 执行极其关键的零初始化
         self._reset_parameters()
 
     def _reset_parameters(self):
-        """
-        安全初始化机制。
-        下采样层 (down) 保持 PyTorch 默认的 Kaiming 均匀分布初始化即可，
-        但上采样层 (up) 的权重必须严格清零！
-        """
-        nn.init.zeros_(self.up.weight)
+        if self.use_conv:
+            nn.init.kaiming_uniform_(self.conv.weight, a=torch.math.sqrt(5))
+        nn.init.zeros_(self.up.weight)  # 严格零初始化，防止初期 Loss 爆炸
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        前向传播。
-        x 的 shape 通常为 [batch_size, sequence_length, hidden_dim]
-        """
-        # 1. 提取医学视觉残差
-        residual = self.up(self.act(self.down(self.norm(x))))
+        # x shape: [Batch, Seq_len, Hidden_dim]
+        h = self.down(x)
+        if self.use_conv:
+            h = h.transpose(-1, -2)  # [Batch, Channels, Seq]
+            h = self.conv(h)
+            h = h.transpose(-1, -2)
+        return self.up(self.act(h))
 
-        # 2. 与原始自然视觉特征相加
-        # 训练第 0 步时，由于 self.up 权重全为 0，residual 必然全为 0，
-        # 所以 return 的结果 100% 等价于原始输入 x。
-        return x + self.alpha * residual
+
+class VisualAdapter_Global(BasicVisualAdapter):
+    def __init__(self, hidden_dim: int, r: int = 16, kernel_size: int = 1, dilation: int = 1):
+        super().__init__(hidden_dim=hidden_dim,r=r,kernel_size=kernel_size,dilation=dilation)
+
+
+class VisualAdapter_Local(BasicVisualAdapter):
+    def __init__(self, hidden_dim: int, r: int = 16, kernel_size: int = 3, dilation: int = 1):
+        super().__init__(hidden_dim=hidden_dim,r=r,kernel_size=kernel_size,dilation=dilation)
+
+
+class VisualAdapter_Region(BasicVisualAdapter):
+    def __init__(self,hidden_dim: int, r: int = 16, kernel_size: int = 5, dilation: int = 1):
+        super().__init__(hidden_dim=hidden_dim,r=r,kernel_size=kernel_size,dilation=dilation)
+
+

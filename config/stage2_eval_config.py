@@ -35,6 +35,9 @@ class Stage2EvalConfig:
     torch_dtype: str = "bfloat16"
     attn_implementation: str = "flash_attention_2"
 
+    # BioMedCLIP 本地绝对路径 (OpenCLIP 格式)
+    biomedclip_path: str = "hf-hub:/home/yuqing/Models/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224"
+
     # --- 4. 视觉 Adapter 参数 (必须与训练时完全一致) ---
     visual_adapter_hidden_dim: int = 4096
     visual_adapter_r: int = 16
@@ -49,7 +52,7 @@ class Stage2EvalConfig:
 
     def __post_init__(self):
         # 评测结果输出目录也自动实现物理隔离
-        base_eval_dir = "/home/yuqing/Models/RouterB_Plus/eval_results_vqa_rad"
+        base_eval_dir = "/home/yuqing/Models/RouterB_Plus_MoA/eval_results_vqa_rad"
         if self.use_visual_adapter:
             self.output_dir = os.path.join(base_eval_dir, "with_visual_adapter")
         else:

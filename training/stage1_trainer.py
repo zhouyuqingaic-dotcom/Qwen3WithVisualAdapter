@@ -1,5 +1,4 @@
 import os
-import sys
 import random
 import numpy as np
 import torch
@@ -15,7 +14,9 @@ from utils.data_tools.collator.mimic_cxr_datasets_train_collator import MIMICCXR
 
 # 3. 导入模型加载与包装器
 from utils.qwen3vl.qwen3_vl_8B_quant_loader import Qwen3VLQuantizedLoader
-from utils.qwen3vl.qwen3_vl_8B_lora_wrapper import Qwen3VLLoraAndVisualAdapterWrapper,Qwen3VLLoraWrapper
+# ⚠️ 注意：已经删除了旧版的 Qwen3VLLoraWrapper 导入
+from utils.qwen3vl.qwen3_vl_8B_lora_wrapper import Qwen3VLLoraAndVisualAdapterWrapper
+from utils.biomedclip.biomed_clip_loader import load_biomedclip
 
 # 4. 导入 DDP 打印工具
 from utils.ddp.ddp_utils import ddp_print
@@ -29,7 +30,7 @@ def set_seed(seed: int):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    # 保证 cuDNN 算子确定性（可能略微影响训练速度，但为了科研复现是值得的）
+    # 保证 cuDNN 算子确定性
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
@@ -44,20 +45,17 @@ def main():
         torch.cuda.set_device(local_rank)
 
     cfg = TrainConfig()
-    use_visual_adapter = cfg.use_visual_adapter
 
-    # 【白金防坑技巧】：从一开始就彻底隔离两组实验的输出目录，防止中间 Checkpoints 互相覆盖！
-    if use_visual_adapter:
-        output_dir = cfg.output_dir_with_visual_adapter
-    else:
-        output_dir = cfg.output_dir_lora_only_baseline
+    # 【更新】：直接使用 Config 自动拼接好的输出目录 (跟随 router_mode 变化)
+    #  直接向 Config 索取最终的路径！不再做任何判断！
+    output_dir = cfg.output_dir
 
     # 锁定全局随机种子
-    # DDP 环境下，如果需要保证各卡初始化的模型一模一样，传相同的 seed
     set_seed(cfg.seed)
 
     ddp_print("\n" + "=" * 60, print_rank=cfg.print_rank)
-    ddp_print("🚀 [1/6] 启动 Route B+ (Stage 1) 分布式训练！", print_rank=cfg.print_rank)
+    ddp_print(f"🚀 [1/6] 启动 Route B+ (Stage 1) 分布式训练！当前模式: {cfg.router_mode.upper()}",
+              print_rank=cfg.print_rank)
     ddp_print("=" * 60, print_rank=cfg.print_rank)
 
     # 主进程负责创建输出目录
@@ -81,7 +79,6 @@ def main():
         rebuild_indices_cache=cfg.mimic_cxr_rebuild_indices_cache,
         cache_prefix=cfg.mimic_cxr_cache_prefix,
     )
-    # 如果配置了最大样本截断（用于调试）
     if hasattr(cfg, "max_mimic_cxr_train_samples") and cfg.max_mimic_cxr_train_samples is not None:
         train_dataset.samples = train_dataset.samples[:cfg.max_mimic_cxr_train_samples]
         ddp_print(f"⚠️ 已截断数据集用于调试，当前样本量: {len(train_dataset)}", print_rank=cfg.print_rank)
@@ -101,41 +98,49 @@ def main():
         bnb_4bit_compute_dtype=cfg.bnb_4bit_compute_dtype,
         torch_dtype=cfg.torch_dtype,
         attn_implementation=cfg.attn_implementation,
-        device_map={"": local_rank} if local_rank != -1 else "auto",  # DDP 下极其关键的一步
+        device_map={"": local_rank} if local_rank != -1 else "auto",
     )
     base_model, processor = loader.load()
 
-    # 训练大语言模型通常推荐 right padding
     processor.tokenizer.padding_side = "right"
     ddp_print("✅ 底座加载完毕！", print_rank=cfg.print_rank)
 
     # ==========================================
-    # 3. 施加黑魔法：植入 LoRA 与 (可选的) Visual Adapter
+    # 🌟 修复：全局单例初始化 BioMedCLIP 引擎 (基于注册表注入)
     # ==========================================
-    ddp_print("\n⏳ [4/6] 正在执行模型接驳手术 (注入 LoRA 及 Visual Adapter)...", print_rank=cfg.print_rank)
+    biomed_extractor = None
+    biomed_transform = None
+    biomed_tokenizer = None
 
-    # 动态读取视觉适配器开关与参数
-
-    if use_visual_adapter:
-        wrapper = Qwen3VLLoraAndVisualAdapterWrapper(
-            lora_r=cfg.lora_r,
-            lora_alpha=cfg.lora_alpha,
-            lora_dropout=cfg.lora_dropout,
-            lora_target_modules=cfg.lora_target_modules,
-            gradient_checkpointing=cfg.gradient_checkpointing,
-            visual_adapter_hidden_dim=cfg.visual_adapter_hidden_dim,
-            visual_adapter_r=cfg.visual_adapter_r,
-            visual_adapter_alpha=cfg.visual_adapter_alpha
-        )
-    else:
-        wrapper=Qwen3VLLoraWrapper(
-            lora_r=cfg.lora_r,
-            lora_alpha=cfg.lora_alpha,
-            lora_dropout=cfg.lora_dropout,
-            lora_target_modules=cfg.lora_target_modules,
-            gradient_checkpointing=cfg.gradient_checkpointing,
+    if cfg.router_mode == "dynamic":
+        # 直接调用重构后的 Loader！
+        biomed_extractor, biomed_transform, biomed_tokenizer = load_biomedclip(
+            biomedclip_path=cfg.biomedclip_path,
+            print_rank=cfg.print_rank
         )
 
+
+    # ==========================================
+    # 3. 施加黑魔法：植入 LoRA 与 MoE Visual Adapter
+    # ==========================================
+    ddp_print("\n⏳ [4/6] 正在执行模型接驳手术 (注入 LoRA 及 MoE Visual Adapter)...", print_rank=cfg.print_rank)
+
+    # 彻底抛弃旧分支，强制挂载完全体 MoE Wrapper
+    wrapper = Qwen3VLLoraAndVisualAdapterWrapper(
+        lora_r=cfg.lora_r,
+        lora_alpha=cfg.lora_alpha,
+        lora_dropout=cfg.lora_dropout,
+        lora_target_modules=cfg.lora_target_modules,
+        gradient_checkpointing=cfg.gradient_checkpointing,
+        visual_adapter_hidden_dim=cfg.visual_adapter_hidden_dim,
+        visual_adapter_r=cfg.visual_adapter_r,
+        router_mode=cfg.router_mode,
+        biomed_extractor=biomed_extractor,  #  依赖注入：分发大脑给 Wrapper
+        global_adapter_kernel_size=cfg.global_adapter_kernel_size,
+        local_adapter_kernel_size=cfg.local_adapter_kernel_size,
+        region_adapter_kernel_size=cfg.region_adapter_kernel_size,
+        fixed_weights=cfg.fixed_weights
+    )
 
     model = wrapper.wrap(base_model)
     ddp_print("✅ 模型接驳完成！", print_rank=cfg.print_rank)
@@ -144,7 +149,14 @@ def main():
     # 4. 初始化 Collator
     # ==========================================
     ddp_print("\n⏳ [5/6] 挂载 MIMIC-CXR 专属 Collator...", print_rank=cfg.print_rank)
-    collator = MIMICCXRTrainCollator(processor, cfg)
+
+    # 👈 依赖注入：分发轻量级手脚给 Collator
+    collator = MIMICCXRTrainCollator(
+        processor=processor,
+        cfg=cfg,
+        biomed_transform=biomed_transform,
+        biomed_tokenizer=biomed_tokenizer
+    )
 
     # ==========================================
     # 5. 配置 HF TrainingArguments
@@ -168,12 +180,10 @@ def main():
         fp16=(cfg.torch_dtype == "float16" or cfg.torch_dtype == torch.float16),
         dataloader_num_workers=cfg.dataloader_num_workers,
 
-        # ⚠️ 避坑：Trainer 级别的 checkpointing 必须为 False！
-        # 因为我们已经在 Qwen3VLLoraWrapper 中通过 prepare_model_for_kbit_training 显式开启了。
         gradient_checkpointing=False,
         remove_unused_columns=False,
         ddp_find_unused_parameters=False,
-        report_to="none",  # 默认关闭 wandb/tensorboard，避免未登录报错
+        report_to="none",
     )
 
     trainer = Trainer(
@@ -187,33 +197,26 @@ def main():
     trainer.train()
 
     # ==========================================
-    # 6. 保存最终权重 (极其关键的解耦保存逻辑)
+    # 6. 保存最终权重 (无条件保存 MoE 组件)
     # ==========================================
     if local_rank in [-1, 0]:
-        #设置权重输出路径
         final_save_path = os.path.join(output_dir, "final_weights")
-
         os.makedirs(final_save_path, exist_ok=True)
 
-        # 6.1 保存 LLM 的 LoRA 权重 (HF Trainer 默认行为)
         trainer.save_model(final_save_path)
         processor.save_pretrained(final_save_path)
         ddp_print(f"\n🎉 训练完成！LoRA 权重与 Processor 已保存至: {final_save_path}", print_rank=cfg.print_rank)
 
-        # 6.2 【核心创新点】如果开启了 Visual Adapter，必须手动从参数树里扣出来单独保存
-        if use_visual_adapter:
-            try:
-                # 定位到被猴子补丁包裹的 Adapter
-                adapter_module = model.base_model.model.model.visual.res_adapter
-                adapter_state_dict = adapter_module.state_dict()
+        # 【修改】：不再检查 use_visual_adapter，无条件安全提取 MoE 权重
+        try:
+            adapter_module = model.base_model.model.model.visual.res_adapter
+            adapter_state_dict = adapter_module.state_dict()
 
-                # 单独存为 pt 文件
-                adapter_save_path = os.path.join(final_save_path, "visual_adapter.pt")
-                torch.save(adapter_state_dict, adapter_save_path)
-                ddp_print(f"✨ 视觉残差适配器 (Visual Adapter) 权重已单独安全保存至: {adapter_save_path}",
-                          print_rank=cfg.print_rank)
-            except Exception as e:
-                ddp_print(f"❌ 保存 Visual Adapter 权重时发生错误: {e}", print_rank=cfg.print_rank)
+            adapter_save_path = os.path.join(final_save_path, "visual_adapter.pt")
+            torch.save(adapter_state_dict, adapter_save_path)
+            ddp_print(f"✨ MoE 多尺度残差适配器权重已单独安全保存至: {adapter_save_path}", print_rank=cfg.print_rank)
+        except Exception as e:
+            ddp_print(f"❌ 保存 Visual Adapter 权重时发生错误: {e}", print_rank=cfg.print_rank)
 
     # ==========================================
     # 7. 优雅释放 DDP 资源
