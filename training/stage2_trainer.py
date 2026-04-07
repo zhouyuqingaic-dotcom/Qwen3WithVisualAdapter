@@ -1,34 +1,30 @@
 import os
-import types
 import random
 import numpy as np
 import torch
 import torch.distributed as dist
-from transformers import Trainer, TrainingArguments
-from peft import PeftModel, prepare_model_for_kbit_training
+from transformers import Trainer, TrainingArguments, TrainerCallback
+
 from config.stage2_train_config import Stage2TrainConfig
 from datas.vqa_rad_datasets import VQARADDataset
 from utils.data_tools.collator.vqa_rad_datasets_train_collator import VQARADTrainCollator
 from utils.qwen3vl.qwen3_vl_8B_quant_loader import Qwen3VLQuantizedLoader
-from utils.qwen3vl.qwen3_vl_8B_visual_adapter import Qwen3VLVisualAdapter
+
+# 🚀 替换为终极完全体 Wrapper 与 BioMedCLIP 加载器
+from utils.qwen3vl.qwen3_vl_8B_lora_wrapper import Qwen3VLLoraAndVisualAdapterWrapper
+from utils.biomedclip.biomed_clip_loader import load_biomedclip
 from utils.ddp.ddp_utils import ddp_print
-from transformers import TrainerCallback
+
+# 引入 PEFT 的状态字典注入工具
+from peft import set_peft_model_state_dict
+from safetensors.torch import load_file
 
 
 class VisualAdapterSaveCallback(TrainerCallback):
     """
-    专属回调：在 HF Trainer 自动保存 checkpoint 时，强制将 Visual Adapter 权重一并保存！
-    支持模式感知：纯 LoRA 模式下自动静默跳过。
+    专属回调：在 HF Trainer 自动保存 checkpoint 时，强制将 MoE Visual Adapter 权重一并保存！
     """
-
-    def __init__(self, use_visual_adapter: bool):
-        self.use_visual_adapter = use_visual_adapter
-
     def on_save(self, args, state, control, **kwargs):
-        # 🚨 如果是纯 LoRA 模式，直接优雅跳过，绝不报错！
-        if not self.use_visual_adapter:
-            return
-
         checkpoint_folder = os.path.join(args.output_dir, f"checkpoint-{state.global_step}")
         model = kwargs["model"]
 
@@ -41,19 +37,16 @@ class VisualAdapterSaveCallback(TrainerCallback):
 
             adapter_save_path = os.path.join(checkpoint_folder, "visual_adapter.pt")
             torch.save(adapter_module.state_dict(), adapter_save_path)
-            print(f"\n  [Callback] ✨ 视觉适配器权重已同步保存至: {adapter_save_path}")
+            print(f"\n  [Callback] ✨ MoE 多尺度视觉适配器权重已同步保存至: {adapter_save_path}")
         except Exception as e:
-            print(f"\n  [Callback] ❌ 保存视觉适配器失败: {e}")
+            print(f"\n  [Callback] ❌ 保存 MoE 视觉适配器失败: {e}")
+
 
 def set_seed(seed: int):
-    """
-    全局随机种子设置，保证多卡 DDP 环境下每次初始化的权重和数据采样顺序一致。
-    """
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    # 保证 cuDNN 算子确定性（可能略微影响训练速度，但为了科研复现是值得的）
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
@@ -67,20 +60,13 @@ def main():
         torch.cuda.set_device(local_rank)
 
     cfg = Stage2TrainConfig()
-    use_visual_adapter = cfg.use_visual_adapter
-
-    # 动态路由输出目录与继承路径
-    if use_visual_adapter:
-        output_dir = cfg.output_dir_with_visual_adapter
-        stage1_weights_dir = cfg.stage1_weights_with_visual_adapter
-    else:
-        output_dir = cfg.output_dir_lora_only_baseline
-        stage1_weights_dir = cfg.stage1_weights_lora_only_baseline
+    output_dir = cfg.output_dir
+    stage1_weights_dir = cfg.stage1_weights_dir
 
     set_seed(cfg.seed)
 
     ddp_print("\n" + "=" * 60, print_rank=cfg.print_rank)
-    ddp_print(f"🚀 [1/6] 启动 Route B+ (Stage 2: VQA-RAD) 分布式训练！", print_rank=cfg.print_rank)
+    ddp_print(f"🚀 [1/6] 启动 Route B+ (Stage 2: VQA-RAD) 分布式微调！模式: {cfg.router_mode.upper()}", print_rank=cfg.print_rank)
     ddp_print(f"🔗 继承 Stage 1 权重目录: {stage1_weights_dir}", print_rank=cfg.print_rank)
     ddp_print("=" * 60, print_rank=cfg.print_rank)
 
@@ -116,74 +102,81 @@ def main():
     )
     base_model, processor = loader.load()
     processor.tokenizer.padding_side = "right"
+    ddp_print("✅ 底座加载完毕！", print_rank=cfg.print_rank)
 
     # ==========================================
-    # 3. 🎯 继承 Stage 1 权重并唤醒梯度 (极度核心)
+    # 3. 初始化 BioMedCLIP 引擎 (Dynamic 模式专属)
     # ==========================================
-    ddp_print("\n⏳ [4/6] 正在装载 Stage 1 权重并执行脑机接驳...", print_rank=cfg.print_rank)
+    biomed_extractor = None
+    biomed_transform = None
+    biomed_tokenizer = None
 
-    # 3.1 开启基础的梯度检查点
-    model = prepare_model_for_kbit_training(
-        base_model,
-        use_gradient_checkpointing=cfg.gradient_checkpointing,
-        gradient_checkpointing_kwargs={"use_reentrant": False},
+    if cfg.router_mode == "dynamic":
+        biomed_extractor, biomed_transform, biomed_tokenizer = load_biomedclip(
+            biomedclip_path=cfg.biomedclip_path,
+            print_rank=cfg.print_rank
+        )
+
+    # ==========================================
+    # 4. 🎯 模型接驳与 Stage 1 完美夺舍 (极度核心)
+    # ==========================================
+    ddp_print("\n⏳ [4/6] 正在执行模型接驳与 Stage 1 权重继承...", print_rank=cfg.print_rank)
+
+    # 4.1 使用 Wrapper 组装架构
+    wrapper = Qwen3VLLoraAndVisualAdapterWrapper(
+        lora_r=cfg.lora_r,
+        lora_alpha=cfg.lora_alpha,
+        lora_dropout=cfg.lora_dropout,
+        lora_target_modules=cfg.lora_target_modules,
+        gradient_checkpointing=cfg.gradient_checkpointing,
+        visual_adapter_hidden_dim=cfg.visual_adapter_hidden_dim,
+        visual_adapter_r=cfg.visual_adapter_r,
+        router_mode=cfg.router_mode,
+        biomed_extractor=biomed_extractor,
+        global_adapter_kernel_size=cfg.global_adapter_kernel_size,
+        local_adapter_kernel_size=cfg.local_adapter_kernel_size,
+        region_adapter_kernel_size=cfg.region_adapter_kernel_size,
+        fixed_weights=cfg.fixed_weights
     )
-    if hasattr(model, "config"):
-        model.config.use_cache = False
+    peft_model = wrapper.wrap(base_model)
 
-    # 3.2 挂载 Stage 1 的 LoRA，并强制开启 is_trainable=True 使其可被继续微调！
-    peft_model = PeftModel.from_pretrained(model, stage1_weights_dir, is_trainable=True)
+    # 4.2 🚀 绝杀：注入 Stage 1 的 LoRA 权重
+    lora_safe_path = os.path.join(stage1_weights_dir, "adapter_model.safetensors")
+    lora_bin_path = os.path.join(stage1_weights_dir, "adapter_model.bin")
 
-    if hasattr(peft_model, "enable_input_require_grads"):
-        peft_model.enable_input_require_grads()
+    if os.path.exists(lora_safe_path):
+        set_peft_model_state_dict(peft_model, load_file(lora_safe_path))
+        ddp_print(f"✅ 成功接驳 Stage 1 LoRA 权重 (safetensors)", print_rank=cfg.print_rank)
+    elif os.path.exists(lora_bin_path):
+        set_peft_model_state_dict(peft_model, torch.load(lora_bin_path, map_location="cpu"))
+        ddp_print(f"✅ 成功接驳 Stage 1 LoRA 权重 (bin)", print_rank=cfg.print_rank)
+    else:
+        raise FileNotFoundError(f"❌ 找不到 Stage 1 的 LoRA 权重文件，请检查: {stage1_weights_dir}")
 
-    # 3.3 继承并挂载 Visual Adapter
-    if use_visual_adapter:
-        vision_tower = peft_model.base_model.model.model.visual
-        ref_param = next(vision_tower.parameters())
-        adapter_dtype = ref_param.dtype if ref_param.is_floating_point() else torch.bfloat16
+    # 4.3 🚀 注入 Stage 1 的 MoE 视觉适配器权重
+    adapter_pt_path = os.path.join(stage1_weights_dir, "visual_adapter.pt")
+    if not os.path.exists(adapter_pt_path):
+        raise FileNotFoundError(f"❌ 找不到 Stage 1 的 Visual Adapter 权重: {adapter_pt_path}")
 
-        # 实例化 Adapter
-        adapter = Qwen3VLVisualAdapter(
-            hidden_dim=cfg.visual_adapter_hidden_dim,
-            r=cfg.visual_adapter_r,
-            init_alpha=cfg.visual_adapter_alpha,
-        ).to(device=ref_param.device, dtype=adapter_dtype)
-
-        # ✨ 加载 Stage 1 保存的物理参数
-        adapter_pt_path = os.path.join(stage1_weights_dir, "visual_adapter.pt")
-        if not os.path.exists(adapter_pt_path):
-            raise FileNotFoundError(f"开启了视觉适配器，但在 Stage 1 目录中找不到 {adapter_pt_path}！")
-
-        adapter.load_state_dict(torch.load(adapter_pt_path, map_location=ref_param.device))
-        adapter.requires_grad_(True)  # 保证在 Stage 2 中继续学习！
-
-        # 上户口
-        vision_tower.res_adapter = adapter
-        vision_tower.original_forward = vision_tower.forward
-
-        # 脑机接驳
-        def patched_forward(self, *args, **kwargs):
-            outputs = self.original_forward(*args, **kwargs)
-            if hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
-                outputs.pooler_output = self.res_adapter(outputs.pooler_output)
-            if hasattr(outputs, "deepstack_features") and outputs.deepstack_features is not None:
-                outputs.deepstack_features = [self.res_adapter(x) for x in outputs.deepstack_features]
-            return outputs
-
-        vision_tower.forward = types.MethodType(patched_forward, vision_tower)
-        ddp_print("✅ Visual Adapter 权重装载成功，已准备好吸收 VQA-RAD 知识！", print_rank=cfg.print_rank)
+    adapter_state_dict = torch.load(adapter_pt_path, map_location="cpu")
+    peft_model.base_model.model.model.visual.res_adapter.load_state_dict(adapter_state_dict)
+    ddp_print(f"✅ 成功接驳 Stage 1 MoE 多尺度视觉适配器权重！", print_rank=cfg.print_rank)
 
     peft_model.print_trainable_parameters()
 
     # ==========================================
-    # 4. 初始化 Collator
+    # 5. 初始化 Collator
     # ==========================================
     ddp_print("\n⏳ [5/6] 挂载 VQA-RAD 专属 Collator...", print_rank=cfg.print_rank)
-    collator = VQARADTrainCollator(processor, cfg)
+    collator = VQARADTrainCollator(
+        processor=processor,
+        cfg=cfg,
+        biomed_transform=biomed_transform,
+        biomed_tokenizer=biomed_tokenizer
+    )
 
     # ==========================================
-    # 5. 配置 HF TrainingArguments & 启动
+    # 6. 配置 HF TrainingArguments & 启动
     # ==========================================
     ddp_print(f"\n🔥 [6/6] 启动 Hugging Face Trainer... 设定轮数: {cfg.num_train_epochs}", print_rank=cfg.print_rank)
 
@@ -214,14 +207,13 @@ def main():
         args=training_args,
         train_dataset=train_dataset,
         data_collator=collator,
-        # 把大开关的状态传给保安，让他知道该不该查岗
-        callbacks=[VisualAdapterSaveCallback(use_visual_adapter=use_visual_adapter)], #需要教 Hugging Face 的 Trainer 在自动保存时，顺手把我们的 Visual Adapter 也存下来
+        callbacks=[VisualAdapterSaveCallback()],
     )
 
     trainer.train()
 
     # ==========================================
-    # 6. 保存最终权重 (Stage 2 结业)
+    # 7. 保存最终权重 (Stage 2 结业)
     # ==========================================
     if local_rank in [-1, 0]:
         final_save_path = os.path.join(output_dir, "final_weights")
@@ -231,17 +223,14 @@ def main():
         processor.save_pretrained(final_save_path)
         ddp_print(f"\n🎉 Stage 2 训练完成！LoRA 已保存至: {final_save_path}", print_rank=cfg.print_rank)
 
-        if use_visual_adapter:
-            try:
-                adapter_module = peft_model.base_model.model.model.visual.res_adapter
-                adapter_save_path = os.path.join(final_save_path, "visual_adapter.pt")
-                torch.save(adapter_module.state_dict(), adapter_save_path)
-                ddp_print(f"✨ 视觉残差适配器 (Stage 2版) 权重已单独安全保存至: {adapter_save_path}",
-                          print_rank=cfg.print_rank)
-            except Exception as e:
-                ddp_print(f"❌ 保存 Visual Adapter 权重时发生错误: {e}", print_rank=cfg.print_rank)
+        try:
+            adapter_module = peft_model.base_model.model.model.visual.res_adapter
+            adapter_save_path = os.path.join(final_save_path, "visual_adapter.pt")
+            torch.save(adapter_module.state_dict(), adapter_save_path)
+            ddp_print(f"✨ 视觉残差适配器 (Stage 2版) 权重已单独安全保存至: {adapter_save_path}", print_rank=cfg.print_rank)
+        except Exception as e:
+            ddp_print(f"❌ 保存 Visual Adapter 权重时发生错误: {e}", print_rank=cfg.print_rank)
 
-    # 释放资源
     if dist.is_available() and dist.is_initialized():
         dist.destroy_process_group()
 
