@@ -10,7 +10,7 @@ class Stage2EvalConfig:
     # ✨ 核心创新点开关：选择当前评测的模型模式
     # =========================================================
     # 可选: "dynamic" (动态MoE) 或 "fixed" (静态MoE)
-    router_mode: str = "fixed"
+    router_mode: str = "dynamic"
 
     # ⚠️ 读取 Stage 2 训练完的最终权重目录
     stage2_weights_dynamic: str = "/home/yuqing/Models/RouterB_Plus_MoA/Stage2_VQA_RAD/dynamic/final_weights"

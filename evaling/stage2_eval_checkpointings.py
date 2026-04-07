@@ -10,15 +10,21 @@ from config.stage2_eval_config import Stage2EvalConfig
 from datas.vqa_rad_datasets import VQARADDataset
 from utils.qwen3vl.qwen3_vl_8B_quant_loader import Qwen3VLQuantizedLoader
 from utils.data_tools.collator.vqa_rad_datasets_eval_collator import VQARADEvalCollator
-from utils.qwen3vl.qwen3_vl_8B_visual_adapter import Qwen3VLVisualAdapter
 from utils.data_tools.prompt_cleaning.vqa_rad_answer_cleaning import vqa_rad_answer_eval_cleaning
+
+# 🚀 导入 MoE 的终极武器库
+from utils.qwen3vl.qwen3_vl_8B_visual_adapter import VisualAdapter_Global, VisualAdapter_Local, VisualAdapter_Region
+from utils.qwen3vl.qwen3_vl_8B_visual_adapters_fusion import Qwen3VLMoEVisualAdapterDynamicFusion, \
+    Qwen3VLMoEVisualAdapterFixedFusion
+from utils.biomedclip.biomed_clip_loader import load_biomedclip
 
 from config.LLM_config import LLMAPIConfig
 from LLM_api.gpt_5_mini import GPT5MiniClient
 from LLM_api.prompts.vqa_rad_prompt_builder_gpt_5_mini import build_llm_judge_user_prompt, parse_llm_judge_response
 
 
-def evaluate_single_checkpoint(weights_path, loader, processor, cfg, test_loader, llm_client, llm_cfg):
+def evaluate_single_checkpoint(weights_path, loader, processor, cfg, test_loader, llm_client, llm_cfg,
+                               biomed_extractor=None):
     """评测单个 Checkpoint 的核心函数"""
     print(f"\n" + "=" * 50)
     print(f"🌟 开始评测 Checkpoint: {os.path.basename(weights_path)}")
@@ -26,43 +32,94 @@ def evaluate_single_checkpoint(weights_path, loader, processor, cfg, test_loader
 
     # 1. 每次都获取一个极其干净的底座！彻底杜绝 LoRA 堆叠污染和 Warning
     base_model = loader.load_model()
+
+    # 直接用 PeftModel 从对应的 checkpoint 读取微调后的 LoRA 权重
     model = PeftModel.from_pretrained(base_model, weights_path)
 
-    # 2. 如果开启了视觉适配器，则挂载它
-    if cfg.use_visual_adapter:
-        vision_tower = model.base_model.model.model.visual
-        ref_param = next(vision_tower.parameters())
-        adapter_dtype = ref_param.dtype if ref_param.is_floating_point() else torch.bfloat16
+    # =========================================================
+    # 2. 🚀 手工挂载 MoE 视觉残差架构 (模型夺舍)
+    # =========================================================
+    vision_tower = model.base_model.model.model.visual
+    ref_param = next(vision_tower.parameters())
+    adapter_dtype = ref_param.dtype if ref_param.is_floating_point() else torch.bfloat16
 
-        adapter = Qwen3VLVisualAdapter(
+    # 实例化三大专家
+    adapter_global = VisualAdapter_Global(hidden_dim=cfg.visual_adapter_hidden_dim, r=cfg.visual_adapter_r,
+                                          kernel_size=cfg.global_adapter_kernel_size)
+    adapter_local = VisualAdapter_Local(hidden_dim=cfg.visual_adapter_hidden_dim, r=cfg.visual_adapter_r,
+                                        kernel_size=cfg.local_adapter_kernel_size)
+    adapter_region = VisualAdapter_Region(hidden_dim=cfg.visual_adapter_hidden_dim, r=cfg.visual_adapter_r,
+                                          kernel_size=cfg.region_adapter_kernel_size)
+
+    # 实例化 Fusion 层并依赖注入
+    if cfg.router_mode == "dynamic":
+        fusion_layer = Qwen3VLMoEVisualAdapterDynamicFusion(
             hidden_dim=cfg.visual_adapter_hidden_dim,
-            r=cfg.visual_adapter_r,
-            init_alpha=cfg.visual_adapter_alpha,
-        ).to(device=ref_param.device, dtype=adapter_dtype)
-
-        adapter_pt_path = os.path.join(weights_path, "visual_adapter.pt")
-        if not os.path.exists(adapter_pt_path):
-            print(f"⚠️ 跳过: 找不到 Adapter 权重 {adapter_pt_path}")
-            del model
-            del base_model
-            torch.cuda.empty_cache()
-            return None
-
-        adapter.load_state_dict(torch.load(adapter_pt_path, map_location=ref_param.device))
-        vision_tower.res_adapter = adapter
-
-        def patched_forward(self, *args, **kwargs):
-            outputs = self.original_forward(*args, **kwargs)
-            if hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
-                outputs.pooler_output = self.res_adapter(outputs.pooler_output)
-            if hasattr(outputs, "deepstack_features") and outputs.deepstack_features is not None:
-                outputs.deepstack_features = [self.res_adapter(x) for x in outputs.deepstack_features]
-            return outputs
-
-        vision_tower.original_forward = vision_tower.forward
-        vision_tower.forward = types.MethodType(patched_forward, vision_tower)
+            adapter_global=adapter_global,
+            adapter_local=adapter_local,
+            adapter_region=adapter_region
+        )
+        model.biomed_extractor = biomed_extractor.to(device=ref_param.device, dtype=adapter_dtype)
     else:
-        print("💡 当前为纯 LoRA Baseline 模式，跳过 Visual Adapter 挂载。")
+        fusion_layer = Qwen3VLMoEVisualAdapterFixedFusion(
+            hidden_dim=cfg.visual_adapter_hidden_dim,
+            adapter_global=adapter_global,
+            adapter_local=adapter_local,
+            adapter_region=adapter_region,
+            fixed_weights=cfg.fixed_weights
+        )
+
+    # 上户口
+    vision_tower.res_adapter = fusion_layer.to(device=ref_param.device, dtype=adapter_dtype)
+
+    # 载入 Stage 2 专属的 MoE 权重
+    adapter_pt_path = os.path.join(weights_path, "visual_adapter.pt")
+    if not os.path.exists(adapter_pt_path):
+        print(f"⚠️ 跳过: 找不到 Adapter 权重 {adapter_pt_path}")
+        del model
+        del base_model
+        torch.cuda.empty_cache()
+        return None
+
+    vision_tower.res_adapter.load_state_dict(torch.load(adapter_pt_path, map_location=ref_param.device))
+    print(f"✅ 成功接驳 Stage 2 多尺度 MoE 视觉适配器！融合模式: {cfg.router_mode.upper()}")
+
+    # =========================================================
+    # 3. 🚀 内层劫持 Forward (适配 Generate 的极限环境)
+    # =========================================================
+    vision_tower.original_forward = vision_tower.forward
+
+    def patched_vision_forward(self, *args, **kwargs):
+        outputs = self.original_forward(*args, **kwargs)
+
+        # 💡 这里非常关键：直接从 vision_tower 自身获取特征
+        img_f = getattr(self, "current_biomed_img_feat", None)
+        txt_f = getattr(self, "current_biomed_txt_feat", None)
+
+        grid_thw = kwargs.get("grid_thw", None)
+        if grid_thw is None and len(args) > 1:
+            grid_thw = args[1]
+
+        is_dynamic = (img_f is not None and txt_f is not None)
+
+        if hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
+            if is_dynamic:
+                outputs.pooler_output = self.res_adapter(outputs.pooler_output, biomed_img_feat=img_f,
+                                                         biomed_txt_feat=txt_f, grid_thw=grid_thw)
+            else:
+                outputs.pooler_output = self.res_adapter(outputs.pooler_output, grid_thw=grid_thw)
+
+        if hasattr(outputs, "deepstack_features") and outputs.deepstack_features is not None:
+            if is_dynamic:
+                outputs.deepstack_features = [
+                    self.res_adapter(x, biomed_img_feat=img_f, biomed_txt_feat=txt_f, grid_thw=grid_thw) for x in
+                    outputs.deepstack_features]
+            else:
+                outputs.deepstack_features = [self.res_adapter(x, grid_thw=grid_thw) for x in
+                                              outputs.deepstack_features]
+        return outputs
+
+    vision_tower.forward = types.MethodType(patched_vision_forward, vision_tower)
 
     model.eval()
 
@@ -72,9 +129,27 @@ def evaluate_single_checkpoint(weights_path, loader, processor, cfg, test_loader
 
     with torch.no_grad():
         for batch_inputs, metadata_list in tqdm(test_loader, desc="Local Inference"):
-            inputs = {k: v.to(model.device) for k, v in batch_inputs.items()}
+            # 将普通输入搬运至 GPU
+            inputs = {k: v.to(model.device) if isinstance(v, torch.Tensor) else v for k, v in batch_inputs.items()}
+
+            # 💡 极其重要：安全剥离多模态专属字典，避开 HF 的类型审查
+            biomed_img = inputs.pop("biomed_image_tensors", None)
+            biomed_txt = inputs.pop("biomed_text_tokens", None)
+
+            # 🚀 绕过 generate() 的偷天换日：手动算好特征并直接挂在 vision_tower 上
+            if cfg.router_mode == "dynamic" and biomed_img is not None and biomed_txt is not None:
+                biomed_img = biomed_img.to(dtype=adapter_dtype)
+                img_f, txt_f = model.biomed_extractor(biomed_img, biomed_txt)
+                vision_tower.current_biomed_img_feat = img_f
+                vision_tower.current_biomed_txt_feat = txt_f
+            else:
+                vision_tower.current_biomed_img_feat = None
+                vision_tower.current_biomed_txt_feat = None
+
+            # generate 不会再抱怨类型错误了！
             generated_ids = model.generate(**inputs, max_new_tokens=cfg.max_new_tokens, do_sample=cfg.do_sample,
                                            temperature=cfg.temperature)
+
             generated_ids_trimmed = [out_ids[len(in_ids):] for in_ids, out_ids in
                                      zip(inputs["input_ids"], generated_ids)]
             output_texts = processor.batch_decode(generated_ids_trimmed, skip_special_tokens=True,
@@ -144,12 +219,8 @@ def evaluate_single_checkpoint(weights_path, loader, processor, cfg, test_loader
 def main():
     cfg = Stage2EvalConfig()
 
-    # 1. 动态获取权重根目录 (完全听从 Config 指挥)
-    if cfg.use_visual_adapter:
-        base_weight_dir = os.path.dirname(cfg.stage2_weights_with_adapter)
-    else:
-        base_weight_dir = os.path.dirname(cfg.stage2_weights_baseline)
-
+    # 1. 动态获取权重根目录 (完全听从 Config 自动生成的 stage2_weights_dir)
+    base_weight_dir = os.path.dirname(cfg.stage2_weights_dir)
     checkpoint_dirs = glob.glob(os.path.join(base_weight_dir, "checkpoint-*"))
     checkpoint_dirs.sort(key=lambda x: int(x.split('-')[-1]))
 
@@ -161,11 +232,10 @@ def main():
         print(f"❌ 在 {base_weight_dir} 下没有找到任何 checkpoint 文件夹！")
         return
 
-    print(
-        f"🔍 寻宝启动！评测模式: {'[开启 Adapter]' if cfg.use_visual_adapter else '[纯 LoRA]'} | 共发现 {len(checkpoint_dirs)} 个节点：")
+    print(f"🔍 寻宝启动！评测模式: [MoE {cfg.router_mode.upper()}] | 共发现 {len(checkpoint_dirs)} 个节点：")
     for cp in checkpoint_dirs: print(f"  - {os.path.basename(cp)}")
 
-    # 2. 初始化环境
+    # 2. 初始化底层环境
     loader = Qwen3VLQuantizedLoader(
         model_path=cfg.model_name_or_path, processor_path=cfg.model_name_or_path,
         load_in_4bit=cfg.load_in_4bit, bnb_4bit_quant_type=cfg.bnb_4bit_quant_type,
@@ -175,8 +245,14 @@ def main():
     processor = loader.load_processor()
     processor.tokenizer.padding_side = "left"
 
+    # 3. 🧠 初始化 BioMedCLIP 大脑 (提前加载一次，避免循环时重复加载造成开销爆表)
+    biomed_extractor, biomed_transform, biomed_tokenizer = None, None, None
+    if cfg.router_mode == "dynamic":
+        biomed_extractor, biomed_transform, biomed_tokenizer = load_biomedclip(cfg.biomedclip_path)
+
+    # 4. 挂载带意图截获的专属 Eval Collator
     test_dataset = VQARADDataset(jsonl_path=cfg.vqa_rad_test_jsonl_path, image_root=cfg.vqa_rad_image_root)
-    eval_collator = VQARADEvalCollator(processor, cfg)
+    eval_collator = VQARADEvalCollator(processor, cfg, biomed_transform, biomed_tokenizer)
     test_loader = DataLoader(test_dataset, batch_size=cfg.per_device_eval_batch_size, collate_fn=eval_collator,
                              num_workers=cfg.dataloader_num_workers, shuffle=False)
 
@@ -184,16 +260,18 @@ def main():
     llm_client = GPT5MiniClient(api_key=llm_cfg.gpt_5_mini_key, base_url=llm_cfg.base_url,
                                 model=llm_cfg.judge_model_name)
 
-    # 3. 循环评测
+    # 5. 循环评测
     results = []
     for cp_path in checkpoint_dirs:
-        # 注意这里把 loader 传进去了，每次都在里面重新取用新模型
-        res = evaluate_single_checkpoint(cp_path, loader, processor, cfg, test_loader, llm_client, llm_cfg)
+        res = evaluate_single_checkpoint(
+            cp_path, loader, processor, cfg, test_loader, llm_client, llm_cfg, biomed_extractor=biomed_extractor
+        )
         if res: results.append(res)
 
-    # 4. 打印 Markdown 排行榜
+    # 6. 打印 Markdown 排行榜
     print("\n\n" + "🏆" * 20 + " 寻宝结果 (Leaderboard) " + "🏆" * 20)
-    print("| 评测节点 (Checkpoint) | Closed Acc (Yes/No) | Open Acc (Strict) | Overall Strict Acc |")
+    print(
+        f"| 评测节点 (模式: {cfg.router_mode.upper()}) | Closed Acc (Yes/No) | Open Acc (Strict) | Overall Strict Acc |")
     print("| :--- | :---: | :---: | :---: |")
     for res in results:
         print(
