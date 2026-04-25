@@ -58,6 +58,8 @@ class Stage2TrainConfig:
     region_adapter_kernel_size: int = 5
     #  新增：当 router_mode="fixed" 时的硬融合比例
     fixed_weights: list[float] = field(default_factory=lambda: [0.33, 0.33, 0.34])
+    # 🚀 【新增】全局 MoE 残差缩放因子，对齐 Single Adapter 的强度
+    moe_alpha: float = 1 #0.9 #0.8 #0.2 #0.1
     
     # --- 4. LoRA 配置 ---
     lora_r: int = 64

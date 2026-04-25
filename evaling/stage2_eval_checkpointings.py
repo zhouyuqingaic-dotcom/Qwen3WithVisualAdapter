@@ -57,7 +57,8 @@ def evaluate_single_checkpoint(weights_path, loader, processor, cfg, test_loader
             hidden_dim=cfg.visual_adapter_hidden_dim,
             adapter_global=adapter_global,
             adapter_local=adapter_local,
-            adapter_region=adapter_region
+            adapter_region=adapter_region,
+            moe_alpha=cfg.moe_alpha, #传入约束Alpha
         )
         model.biomed_extractor = biomed_extractor.to(device=ref_param.device, dtype=adapter_dtype)
     else:
@@ -66,7 +67,8 @@ def evaluate_single_checkpoint(weights_path, loader, processor, cfg, test_loader
             adapter_global=adapter_global,
             adapter_local=adapter_local,
             adapter_region=adapter_region,
-            fixed_weights=cfg.fixed_weights
+            fixed_weights=cfg.fixed_weights,
+            moe_alpha=cfg.moe_alpha, #传入约束Alpha
         )
 
     # 上户口

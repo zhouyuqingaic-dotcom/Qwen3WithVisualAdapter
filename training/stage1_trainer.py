@@ -139,7 +139,8 @@ def main():
         global_adapter_kernel_size=cfg.global_adapter_kernel_size,
         local_adapter_kernel_size=cfg.local_adapter_kernel_size,
         region_adapter_kernel_size=cfg.region_adapter_kernel_size,
-        fixed_weights=cfg.fixed_weights
+        fixed_weights=cfg.fixed_weights,
+        moe_alpha=cfg.moe_alpha, #传入约束alpha
     )
 
     model = wrapper.wrap(base_model)

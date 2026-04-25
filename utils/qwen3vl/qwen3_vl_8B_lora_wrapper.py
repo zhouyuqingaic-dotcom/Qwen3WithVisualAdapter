@@ -44,8 +44,11 @@ class Qwen3VLLoraAndVisualAdapterWrapper:
             global_adapter_kernel_size=1,
             local_adapter_kernel_size=3,
             region_adapter_kernel_size=5,
-            fixed_weights=[0.33, 0.33, 0.34]  # 👈 【修复 1】接住 Trainer 传来的 fixed_weights
+            fixed_weights=[0.33, 0.33, 0.34],  # 👈 【修复 1】接住 Trainer 传来的 fixed_weights
+            moe_alpha=0.1, #👈 新增
     ):
+        self.moe_alpha = moe_alpha  # 👈 新增
+
         self.r = lora_r
         self.alpha = lora_alpha
         self.dropout = lora_dropout
@@ -101,7 +104,8 @@ class Qwen3VLLoraAndVisualAdapterWrapper:
                 hidden_dim=hidden_dim,
                 adapter_global=adapter_global,
                 adapter_local=adapter_local,
-                adapter_region=adapter_region
+                adapter_region=adapter_region,
+                moe_alpha=self.moe_alpha,  # 👈 新增透传
             )
             # 挂载冻结的 BioMedCLIP 大脑到 peft_model 上
             peft_model.biomed_extractor = self.biomed_extractor.to(device=ref_param.device, dtype=adapter_dtype)
@@ -111,7 +115,8 @@ class Qwen3VLLoraAndVisualAdapterWrapper:
                 adapter_global=adapter_global,
                 adapter_local=adapter_local,
                 adapter_region=adapter_region,
-                fixed_weights=self.fixed_weights  # 👈 【修复 3】把外面的硬融合比例准确无误地传给底座！
+                fixed_weights=self.fixed_weights,  # 👈 【修复 3】把外面的硬融合比例准确无误地传给底座！
+                moe_alpha=self.moe_alpha,  # 👈 新增透传
             )
 
         # 上户口：将融合枢纽挂载到视觉塔，使其被 PyTorch 追踪并更新梯度

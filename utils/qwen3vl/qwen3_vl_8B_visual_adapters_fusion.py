@@ -47,8 +47,11 @@ class Qwen3VLMoEVisualAdapterDynamicFusion(nn.Module):
                  adapter_local: nn.Module,
                  adapter_region: nn.Module,
                  biomedclip_image_encoder_dim:int=512,
-                 biomedclip_text_encoder_dim:int=512):
+                 biomedclip_text_encoder_dim:int=512,
+                 moe_alpha: float = 0.1):  # 👈 新增
         super().__init__()
+        self.moe_alpha = moe_alpha # 👈 新增
+
         self.hidden_dim = hidden_dim
 
         self.norm = nn.LayerNorm(hidden_dim)
@@ -114,8 +117,8 @@ class Qwen3VLMoEVisualAdapterDynamicFusion(nn.Module):
         # 🚀 4. 只有算好的最终残差特征，才拼回成统一的长条
         moe_residual = torch.cat(moe_residual_list, dim=1)
 
-        # 🚀 5. 最后经典的残差相加
-        out = x + moe_residual
+        # 🚀 5. 最后经典的残差相加：套上 0.1 紧箍咒！
+        out = x + self.moe_alpha * moe_residual
 
         if is_2d:
             out = out.squeeze(0)
@@ -137,8 +140,10 @@ class Qwen3VLMoEVisualAdapterFixedFusion(nn.Module):
                  adapter_global: nn.Module,
                  adapter_local: nn.Module,
                  adapter_region: nn.Module,
-                 fixed_weights: list[float] = [0.33, 0.33, 0.34]):
+                 fixed_weights: list[float] = [0.33, 0.33, 0.34],
+                 moe_alpha=0.1): # 👈 新增
         super().__init__()
+        self.moe_alpha = moe_alpha  # 👈 新增
         self.hidden_dim = hidden_dim
         self.fixed_weights = fixed_weights
 
@@ -187,7 +192,8 @@ class Qwen3VLMoEVisualAdapterFixedFusion(nn.Module):
         # 🚀 4. 融合输出
         w_g, w_l, w_r = self.fixed_weights
         fixed_alpha_residual = w_g * res_g + w_l * res_l + w_r * res_r
-        out = x + fixed_alpha_residual  # 经典的 x + Adapter(Norm(x)) 结构
+        # 🚀 融合输出：套上 0.1 紧箍咒！
+        out = x + self.moe_alpha * fixed_alpha_residual # 经典的 x + Adapter(Norm(x)) 结构
 
         if is_2d:
             out = out.squeeze(0)

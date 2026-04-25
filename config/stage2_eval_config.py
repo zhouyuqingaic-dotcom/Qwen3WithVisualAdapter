@@ -49,6 +49,8 @@ class Stage2EvalConfig:
     region_adapter_kernel_size: int = 5
     # 🚀 与 Train Config 绝对对齐的硬融合比例
     fixed_weights: list[float] = field(default_factory=lambda: [0.33, 0.33, 0.34])
+    # 🚀 【新增】全局 MoE 残差缩放因子，对齐 Single Adapter 的强度
+    moe_alpha: float = 1 #0.9 #0.8 #0.2 #0.1
 
     # --- 5. 评测与生成参数 (Generation Config) ---
     max_new_tokens: int = 64

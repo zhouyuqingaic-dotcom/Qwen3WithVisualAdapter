@@ -99,12 +99,14 @@ class TrainConfig:
     visual_adapter_r: int = 16
     # 【新增】多尺度 Visual Adapter 与 Router 专属配置
     # router_mode: str = "dynamic"  # 可选: "dynamic" 或 "fixed"
-    router_mode: str = "fixed"  # 可选: "dynamic" 或 "fixed"
+    router_mode: str = "dynamic"  # 可选: "dynamic" 或 "fixed"
     global_adapter_kernel_size: int = 1
     local_adapter_kernel_size: int = 3
     region_adapter_kernel_size: int = 5
     #  新增：当 router_mode="fixed" 时的硬融合比例
     fixed_weights: list[float] = field(default_factory=lambda: [0.33, 0.33, 0.34])
+    # 🚀 【新增】全局 MoE 残差缩放因子，对齐 Single Adapter 的强度
+    moe_alpha: float = 1 #0.9 #0.8 #0.2 # 0.1
 
     def __post_init__(self):
         if self.attn_implementation == "flash_attention_2" and self.torch_dtype != "bfloat16":
