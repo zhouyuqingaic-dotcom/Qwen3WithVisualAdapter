@@ -95,14 +95,20 @@ class Stage2TrainConfig:
     def __post_init__(self):
         if self.attn_implementation == "flash_attention_2" and self.torch_dtype != "bfloat16":
             print("⚠️ Warning: flash_attention_2 is best paired with bfloat16!")
-        # 🚀 绝杀：根据 router_mode 动态绑定输出路径，并且自动拼接 "final_weights"
+
+        # 🚀 1. 根据 router_mode 提取基础路径 (千万不要在这里提前拼接 final_weights)
         if self.router_mode == "dynamic":
-            self.output_dir = self.output_dir_with_visual_adapter_dynamic
-            self.stage1_weights_dir = os.path.join(self.stage1_output_dir_with_visual_adapter_dynamic,
-                                                   "final_weights")
+            base_output_dir = self.output_dir_with_visual_adapter_dynamic
+            base_stage1_dir = self.stage1_output_dir_with_visual_adapter_dynamic
         elif self.router_mode == "fixed":
-            self.output_dir = self.output_dir_with_visual_adapter_fixed
-            self.stage1_weights_dir = os.path.join(self.stage1_output_dir_with_visual_adapter_fixed,
-                                                   "final_weights")
+            base_output_dir = self.output_dir_with_visual_adapter_fixed
+            base_stage1_dir = self.stage1_output_dir_with_visual_adapter_fixed
         else:
             raise ValueError(f"❌ 不支持的 router_mode: {self.router_mode}，只能是 'dynamic' 或 'fixed'")
+
+        # 🚀 2. 给 Stage 2 的输出路径动态追加 Alpha 后缀
+        self.output_dir = f"{base_output_dir}_Alpha_{self.moe_alpha}"
+
+        # 🚀 3. 给 Stage 1 的读取路径追加 Alpha 后缀，然后再在最末端拼接 "final_weights"
+        stage1_alpha_dir = f"{base_stage1_dir}_Alpha_{self.moe_alpha}"
+        self.stage1_weights_dir = os.path.join(stage1_alpha_dir, "final_weights")

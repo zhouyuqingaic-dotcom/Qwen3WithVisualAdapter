@@ -114,8 +114,13 @@ class TrainConfig:
 
         # 🚀 根据 router_mode 直接绑定对应的输出绝对路径
         if self.router_mode == "dynamic":
-            self.output_dir = self.output_dir_with_visual_adapter_dynamic
+            # self.output_dir = self.output_dir_with_visual_adapter_dynamic
+            base_dir = self.output_dir_with_visual_adapter_dynamic
         elif self.router_mode == "fixed":
-            self.output_dir = self.output_dir_with_visual_adapter_fixed
+            # self.output_dir = self.output_dir_with_visual_adapter_fixed
+            base_dir = self.output_dir_with_visual_adapter_fixed
         else:
             raise ValueError(f"❌ 不支持的 router_mode: {self.router_mode}，只能是 'dynamic' 或 'fixed'")
+
+        # 🚀 动态追加 Alpha 后缀，实现权重目录物理隔离
+        self.output_dir = f"{base_dir}_Alpha_{self.moe_alpha}"

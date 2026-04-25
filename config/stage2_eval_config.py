@@ -60,15 +60,25 @@ class Stage2EvalConfig:
     dataloader_num_workers: int = 4
 
     def __post_init__(self):
-        # 评测结果输出目录和读取的权重路径也自动实现物理隔离
+        # 1. 基础目录定义 (Base Directories)
         base_eval_dir = "/home/yuqing/Models/RouterB_Plus_MoA/eval_results_vqa_rad"
+        base_stage2_dynamic = "/home/yuqing/Models/RouterB_Plus_MoA/Stage2_VQA_RAD/dynamic"
+        base_stage2_fixed = "/home/yuqing/Models/RouterB_Plus_MoA/Stage2_VQA_RAD/fixed"
 
-        # 🚀 根据 router_mode 自动绑定输入与输出！
+        # 🚀 2. 根据 router_mode 提取基础路径
         if self.router_mode == "dynamic":
-            self.output_dir = os.path.join(base_eval_dir, "dynamic")
-            self.stage2_weights_dir = self.stage2_weights_dynamic
+            base_output_dir = os.path.join(base_eval_dir, "dynamic")
+            base_stage2_dir = base_stage2_dynamic
         elif self.router_mode == "fixed":
-            self.output_dir = os.path.join(base_eval_dir, "fixed")
-            self.stage2_weights_dir = self.stage2_weights_fixed
+            base_output_dir = os.path.join(base_eval_dir, "fixed")
+            base_stage2_dir = base_stage2_fixed
         else:
             raise ValueError(f"❌ 不支持的 router_mode: {self.router_mode}，只能是 'dynamic' 或 'fixed'")
+
+        # 🚀 3. 给评测结果的【保存路径】追加 Alpha 后缀 (例如: eval_results_vqa_rad/dynamic_Alpha_0.9)
+        self.output_dir = f"{base_output_dir}_Alpha_{self.moe_alpha}"
+
+        # 🚀 4. 给 Stage 2 权重的【读取路径】追加 Alpha 后缀，并在最末端拼接 "final_weights"
+        # 这样你的寻宝脚本 os.path.dirname(config.stage2_weights_dir) 就能精准定位到 Alpha 专属的目录
+        stage2_alpha_dir = f"{base_stage2_dir}_Alpha_{self.moe_alpha}"
+        self.stage2_weights_dir = os.path.join(stage2_alpha_dir, "final_weights")
