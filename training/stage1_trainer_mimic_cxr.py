@@ -6,11 +6,11 @@ import torch.distributed as dist
 from transformers import Trainer, TrainingArguments
 
 # 1. 导入配置
-from config.stage1_train_config import TrainConfig
+from config.stage1_train_config_mimic_cxr import TrainConfig
 
 # 2. 导入数据集与 Collator
 from datas.mimic_cxr_datasets import MIMICCXRDataset
-from utils.data_tools.collator.mimic_cxr_datasets_train_collator import MIMICCXRTrainCollator
+from utils.data_tools.collator.mimic_cxr.mimic_cxr_datasets_train_collator import MIMICCXRTrainCollator
 
 # 3. 导入模型加载与包装器
 from utils.qwen3vl.qwen3_vl_8B_quant_loader import Qwen3VLQuantizedLoader

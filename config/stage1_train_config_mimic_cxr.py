@@ -106,7 +106,7 @@ class TrainConfig:
     #  新增：当 router_mode="fixed" 时的硬融合比例
     fixed_weights: list[float] = field(default_factory=lambda: [0.33, 0.33, 0.34])
     # 🚀 【新增】全局 MoE 残差缩放因子，对齐 Single Adapter 的强度
-    moe_alpha: float = 1 #0.9 #0.8 #0.2 # 0.1
+    moe_alpha: float = 0.9 #1  #0.8 #0.2 # 0.1
 
     def __post_init__(self):
         if self.attn_implementation == "flash_attention_2" and self.torch_dtype != "bfloat16":

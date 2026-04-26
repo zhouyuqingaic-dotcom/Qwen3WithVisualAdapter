@@ -1,11 +1,10 @@
-import sys
 import random
 import torch
 from torch.utils.data import DataLoader, Subset
 
 
 # 1. 导入全新的配置类
-from config.stage1_train_config import TrainConfig
+from config.stage1_train_config_mimic_cxr import TrainConfig
 
 # 2. 导入数据集
 from datas.mimic_cxr_datasets import MIMICCXRDataset
@@ -15,7 +14,7 @@ from utils.qwen3vl.qwen3_vl_8B_quant_loader import Qwen3VLQuantizedLoader
 from utils.qwen3vl.qwen3_vl_8B_lora_wrapper import Qwen3VLLoraAndVisualAdapterWrapper,Qwen3VLLoraWrapper
 
 # 4. 导入专属 Collator 与文本清洗器
-from utils.data_tools.collator.mimic_cxr_datasets_train_collator import MIMICCXRTrainCollator
+from utils.data_tools.collator.mimic_cxr.mimic_cxr_datasets_train_collator import MIMICCXRTrainCollator
 from utils.data_tools.prompt_cleaning.mimic_cxr_text_cleaning import mimic_cxr_text_train_cleaning
 
 

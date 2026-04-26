@@ -5,9 +5,9 @@ import torch
 import torch.distributed as dist
 from transformers import Trainer, TrainingArguments, TrainerCallback
 
-from config.stage2_train_config import Stage2TrainConfig
+from config.vqa_rad.stage2_train_config_vqa_rad import Stage2TrainConfig
 from datas.vqa_rad_datasets import VQARADDataset
-from utils.data_tools.collator.vqa_rad_datasets_train_collator import VQARADTrainCollator
+from utils.data_tools.collator.vqa_rad.vqa_rad_datasets_train_collator import VQARADTrainCollator
 from utils.qwen3vl.qwen3_vl_8B_quant_loader import Qwen3VLQuantizedLoader
 
 # 🚀 替换为终极完全体 Wrapper 与 BioMedCLIP 加载器

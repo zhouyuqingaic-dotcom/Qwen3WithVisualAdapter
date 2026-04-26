@@ -10,10 +10,10 @@ from peft import PeftModel
 # 确保脚本能够找到根目录下的自定义包
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.stage2_eval_config import Stage2EvalConfig
+from config.vqa_rad.stage2_eval_config_vqa_rad import Stage2EvalConfig
 from datas.vqa_rad_datasets import VQARADDataset
 from utils.qwen3vl.qwen3_vl_8B_quant_loader import Qwen3VLQuantizedLoader
-from utils.data_tools.collator.vqa_rad_datasets_eval_collator import VQARADEvalCollator
+from utils.data_tools.collator.vqa_rad.vqa_rad_datasets_eval_collator import VQARADEvalCollator
 from utils.qwen3vl.qwen3_vl_8B_visual_adapter import Qwen3VLVisualAdapter
 from utils.data_tools.prompt_cleaning.vqa_rad_answer_cleaning import vqa_rad_answer_eval_cleaning
 
