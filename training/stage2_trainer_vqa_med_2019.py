@@ -6,12 +6,12 @@ import torch.distributed as dist
 from torch.utils.data import ConcatDataset  # 🚀 降维打击核心工具：缝合数据集
 from transformers import Trainer, TrainingArguments, TrainerCallback
 
-# 1. 导入 SLAKE 专属配置类
-from config.slake.stage2_train_config_slake import Stage2TrainConfig
-# 2. 导入 SLAKE 数据集
-from datas.slake_datasets import SLAKEDataset
-# 3. 导入 SLAKE 专属 Collator
-from utils.data_tools.collator.slake.slake_datasets_train_collator import SLAKETrainCollator
+# 1. 导入 VQA-MED-2019 专属配置类
+from config.vqa_med_2019.stage2_train_config_vqa_med_2019 import Stage2TrainConfig
+# 2. 导入 VQA-MED-2019 数据集
+from datas.vqa_med_2019_datasets import VQAMED2019Dataset
+# 3. 导入 VQA-MED-2019 专属 Collator
+from utils.data_tools.collator.vqa_med_2019.vqa_med_2019_train_collator import VQAMED2019TrainCollator
 
 from utils.qwen3vl.qwen3_vl_8B_quant_loader import Qwen3VLQuantizedLoader
 
@@ -72,16 +72,12 @@ def main():
     set_seed(cfg.seed)
 
     ddp_print("\n" + "=" * 60, print_rank=cfg.print_rank)
-    ddp_print(f"🚀 [1/6] 启动 Route B+ (Stage 2: SLAKE 降维打击) 分布式微调！模式: {cfg.router_mode.upper()}",
+    ddp_print(f"🚀 [1/6] 启动 Route B+ (Stage 2: VQA-MED-2019 降维打击) 分布式微调！模式: {cfg.router_mode.upper()}",
               print_rank=cfg.print_rank)
     ddp_print(f"🔗 继承 Stage 1 权重目录: {stage1_weights_dir}", print_rank=cfg.print_rank)
     ddp_print("=" * 60, print_rank=cfg.print_rank)
 
-    # ============================================================
-    # 🔍 新增：强制打印内存中实际读取到的核心配置与路径 (抓虫专用)
-    # ============================================================
     ddp_print(f"💡 [Debug] 内存中实际读取的 moe_alpha 值: {cfg.moe_alpha}", print_rank=cfg.print_rank)
-    ddp_print(f"🔗 [Debug] 继承 Stage 1 权重目录: {stage1_weights_dir}", print_rank=cfg.print_rank)
     ddp_print(f"📁 [Debug] Stage 2 本次输出主目录: {output_dir}", print_rank=cfg.print_rank)
     ddp_print("=" * 60, print_rank=cfg.print_rank)
 
@@ -91,21 +87,21 @@ def main():
             raise FileNotFoundError(f"❌ 找不到 Stage 1 权重，请核实路径: {stage1_weights_dir}")
 
     # ==========================================
-    # 1. 🚀 核心修改：加载并无缝缝合 SLAKE Train + Val 数据集
+    # 1. 🚀 核心修改：加载并无缝缝合 VQA-MED Train + Val 数据集
     # ==========================================
-    ddp_print("⏳ [2/6] 正在加载并合并 SLAKE Train 和 Val 数据集...", print_rank=cfg.print_rank)
+    ddp_print("⏳ [2/6] 正在加载并合并 VQA-MED-2019 Train 和 Val 数据集...", print_rank=cfg.print_rank)
 
-    train_subset = SLAKEDataset(
-        json_path=cfg.slake_train_json_path,
-        image_root=cfg.slake_image_root,
+    train_subset = VQAMED2019Dataset(
+        data_path=cfg.vqa_med_2019_train_data_path,
+        image_root=cfg.vqa_med_2019_train_image_root,
     )
 
-    val_subset = SLAKEDataset(
-        json_path=cfg.slake_val_json_path,
-        image_root=cfg.slake_image_root,
+    val_subset = VQAMED2019Dataset(
+        data_path=cfg.vqa_med_2019_val_data_path,
+        image_root=cfg.vqa_med_2019_val_image_root,
     )
 
-    # 施加黑魔法：拼装成将近 1.2 万条数据的训练集
+    # 施加黑魔法：拼装成将近 1.4 万条数据的训练集
     train_dataset = ConcatDataset([train_subset, val_subset])
     ddp_print(f"✅ 数据集缝合完成，共有 {len(train_dataset)} 条高纯度医学样本！", print_rank=cfg.print_rank)
 
@@ -146,7 +142,6 @@ def main():
     # ==========================================
     ddp_print("\n⏳ [4/6] 正在执行模型接驳与 Stage 1 权重继承...", print_rank=cfg.print_rank)
 
-    # 4.1 使用 Wrapper 组装架构
     wrapper = Qwen3VLLoraAndVisualAdapterWrapper(
         lora_r=cfg.lora_r,
         lora_alpha=cfg.lora_alpha,
@@ -165,7 +160,6 @@ def main():
     )
     peft_model = wrapper.wrap(base_model)
 
-    # 4.2 🚀 绝杀：注入 Stage 1 的 LoRA 权重
     lora_safe_path = os.path.join(stage1_weights_dir, "adapter_model.safetensors")
     lora_bin_path = os.path.join(stage1_weights_dir, "adapter_model.bin")
 
@@ -178,7 +172,6 @@ def main():
     else:
         raise FileNotFoundError(f"❌ 找不到 Stage 1 的 LoRA 权重文件，请检查: {stage1_weights_dir}")
 
-    # 4.3 🚀 注入 Stage 1 的 MoE 视觉适配器权重
     adapter_pt_path = os.path.join(stage1_weights_dir, "visual_adapter.pt")
     if not os.path.exists(adapter_pt_path):
         raise FileNotFoundError(f"❌ 找不到 Stage 1 的 Visual Adapter 权重: {adapter_pt_path}")
@@ -190,10 +183,10 @@ def main():
     peft_model.print_trainable_parameters()
 
     # ==========================================
-    # 5. 🚀 挂载 SLAKE 专属 Collator
+    # 5. 🚀 挂载 VQA-MED 专属 Collator
     # ==========================================
-    ddp_print("\n⏳ [5/6] 挂载 SLAKE 专属 Collator...", print_rank=cfg.print_rank)
-    collator = SLAKETrainCollator(
+    ddp_print("\n⏳ [5/6] 挂载 VQA-MED-2019 专属 Collator...", print_rank=cfg.print_rank)
+    collator = VQAMED2019TrainCollator(
         processor=processor,
         cfg=cfg,
         biomed_transform=biomed_transform,
@@ -238,7 +231,7 @@ def main():
     trainer.train()
 
     # ==========================================
-    # 7. 保存最终权重 (Stage 2 SLAKE 结业)
+    # 7. 保存最终权重
     # ==========================================
     if local_rank in [-1, 0]:
         final_save_path = os.path.join(output_dir, "final_weights")
@@ -246,13 +239,13 @@ def main():
 
         trainer.save_model(final_save_path)
         processor.save_pretrained(final_save_path)
-        ddp_print(f"\n🎉 Stage 2 (SLAKE) 训练完成！LoRA 已保存至: {final_save_path}", print_rank=cfg.print_rank)
+        ddp_print(f"\n🎉 Stage 2 (VQA-MED-2019) 训练完成！LoRA 已保存至: {final_save_path}", print_rank=cfg.print_rank)
 
         try:
             adapter_module = peft_model.base_model.model.model.visual.res_adapter
             adapter_save_path = os.path.join(final_save_path, "visual_adapter.pt")
             torch.save(adapter_module.state_dict(), adapter_save_path)
-            ddp_print(f"✨ 视觉残差适配器 (SLAKE版) 权重已单独安全保存至: {adapter_save_path}",
+            ddp_print(f"✨ 视觉残差适配器权重已单独安全保存至: {adapter_save_path}",
                       print_rank=cfg.print_rank)
         except Exception as e:
             ddp_print(f"❌ 保存 Visual Adapter 权重时发生错误: {e}", print_rank=cfg.print_rank)

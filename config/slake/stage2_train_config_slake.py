@@ -16,7 +16,7 @@ class Stage2TrainConfig:
     stage1_output_dir_with_visual_adapter_fixed: str = "/home/yuqing/Models/RouterB_Plus_MoA/with_visual_adapter_fixed"
 
     print_rank: int = 0
-    seed: int = 1912
+    seed: int = 1912 #1024 #2048 #1024 #1912
 
     # --- 2. SLAKE 数据集配置 ---
     slake_train_json_path: str = "/home/yuqing/Datas/SLAKE/Slake1.0/train.json"
@@ -50,15 +50,15 @@ class Stage2TrainConfig:
     visual_adapter_hidden_dim: int = 4096  # Qwen3-VL-8B 探测出的真实视觉-语言对齐维度
     visual_adapter_r: int = 16
 
-    router_mode: str = "dynamic"  # 保持动态路由
+    router_mode: str = "fixed" #"dynamic"  # 保持动态路由
     global_adapter_kernel_size: int = 1
     local_adapter_kernel_size: int = 3
     region_adapter_kernel_size: int = 5
 
-    fixed_weights: list[float] = field(default_factory=lambda: [0.33, 0.33, 0.34])
+    fixed_weights: list[float] = field(default_factory=lambda: [0.333, 0.333, 0.334])
 
     # 🚀 【核心锁死】直接将 VQA-RAD 上推导出的通用物理边界 迁移过来！
-    moe_alpha: float = 1 #0.9
+    moe_alpha: float = 1 #0 #0.7 #0.3 #0.2 #0.1 #0.4 #0.6 #0.5 #0.8 #0.9 #1
 
     # --- 4. LoRA 配置 ---
     lora_r: int = 64
@@ -113,8 +113,17 @@ class Stage2TrainConfig:
             raise ValueError(f"❌ 不支持的 router_mode: {self.router_mode}，只能是 'dynamic' 或 'fixed'")
 
         # 🚀 2. 给 Stage 2 的输出路径动态追加 Alpha 后缀
-        self.output_dir = f"{base_output_dir}_Alpha_{self.moe_alpha}"
+        self.output_dir = f"{base_output_dir}_Alpha_{self.moe_alpha}_seed_{self.seed}"
 
         # 🚀 3. 给 Stage 1 的读取路径追加 Alpha 后缀，然后再在最末端拼接 "final_weights"
-        stage1_alpha_dir = f"{base_stage1_dir}_Alpha_{self.moe_alpha}"
+        stage1_alpha_dir = f"{base_stage1_dir}_Alpha_{self.moe_alpha}_seed_{self.seed}"
         self.stage1_weights_dir = os.path.join(stage1_alpha_dir, "final_weights")
+
+        # =========================================================
+        # 🖨️ 新增：打印最终生成的路径，方便终端核对
+        # =========================================================
+        print("\n" + "=" * 60)
+        print(f"⚙️ [Stage 2 Train Config] 初始化完成 | 模式: {self.router_mode.upper()} | Alpha: {self.moe_alpha}")
+        print(f"📂 读取 Stage 1 权重: {self.stage1_weights_dir}")
+        print(f"💾 训练结果输出目录: {self.output_dir}")
+        print("=" * 60 + "\n")

@@ -96,6 +96,11 @@ class Qwen3VLMoEVisualAdapterDynamicFusion(nn.Module):
         # 🚀 2. 进行物理隔离切分
         x_splits = visual_token_split(x, grid_thw)
         moe_residual_list = []
+        
+        #  =======================================================
+        # 🚀 正确写法：变量名必须是 router_weights，不能带 ing！
+        self.latest_routing_weights = router_weights.detach().clone()
+        #  =======================================================
 
         # 🚀 3. 在循环内：归一化 -> 过网 -> 直接加权求和
         for i, sub_x in enumerate(x_splits):

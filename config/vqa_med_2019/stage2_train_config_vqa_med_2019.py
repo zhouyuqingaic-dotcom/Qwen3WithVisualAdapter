@@ -1,32 +1,35 @@
 import os
 from dataclasses import dataclass, field
-from dataclasses import dataclass
 
 
 @dataclass
 class Stage2TrainConfig:
-    """阶段二 (Stage 2: VQA-RAD) 全局配置类"""
+    """阶段二 (Stage 2: VQA-MED-2019) 降维打击全局配置类"""
 
     # --- 1. 基础与输出路径配置 ---
-    # 输出目录 (Stage 2 结果)
-    output_dir_with_visual_adapter_dynamic: str = "/home/yuqing/Models/RouterB_Plus_MoA/Stage2_VQA_RAD/dynamic"
-    output_dir_with_visual_adapter_fixed: str = "/home/yuqing/Models/RouterB_Plus_MoA/Stage2_VQA_RAD/fixed"
+    # 输出目录 (Stage 2 VQA-MED 专属结果目录)
+    output_dir_with_visual_adapter_dynamic: str = "/home/yuqing/Models/RouterB_Plus_MoA/Stage2_VQA_MED_2019/dynamic"
+    output_dir_with_visual_adapter_fixed: str = "/home/yuqing/Models/RouterB_Plus_MoA/Stage2_VQA_MED_2019/fixed"
 
-    # ⚠️ 继承 Stage 1 权重的根目录
+    # ⚠️ 继承 Stage 1 权重的根目录 (基座保持不变)
     stage1_output_dir_with_visual_adapter_dynamic: str = "/home/yuqing/Models/RouterB_Plus_MoA/with_visual_adapter_dynamic"
     stage1_output_dir_with_visual_adapter_fixed: str = "/home/yuqing/Models/RouterB_Plus_MoA/with_visual_adapter_fixed"
 
     print_rank: int = 0
     seed: int = 1912
 
-    # --- 2. VQA-RAD 数据集配置 ---
-    vqa_rad_train_jsonl_path: str = "/home/yuqing/Datas/VQA-RAD/train.jsonl"
-    vqa_rad_test_jsonl_path: str = "/home/yuqing/Datas/VQA-RAD/test.jsonl"
-    vqa_rad_image_root: str = "/home/yuqing/Datas/VQA-RAD/images"
-    vqa_rad_max_size: int = 1024
+    # --- 2. VQA-MED-2019 数据集配置 ---
+    # 🎯 指向我们刚才测通的 QAPairsByCategory 文件夹
+    vqa_med_2019_train_data_path: str = "/home/yuqing/Datas/VQA-Med-2019/train/ImageClef-2019-VQA-Med-Training/QAPairsByCategory"
+    vqa_med_2019_train_image_root: str = "/home/yuqing/Datas/VQA-Med-2019/train/ImageClef-2019-VQA-Med-Training/Train_images"
 
-    # 阶段二专属指令
-    vqa_rad_instruction_suffix: str = (
+    vqa_med_2019_val_data_path: str = "/home/yuqing/Datas/VQA-Med-2019/val/ImageClef-2019-VQA-Med-Validation/QAPairsByCategory"
+    vqa_med_2019_val_image_root: str = "/home/yuqing/Datas/VQA-Med-2019/val/ImageClef-2019-VQA-Med-Validation/Val_images"
+
+    vqa_med_2019_max_size: int = 1024
+
+    # 🚀 降维打击核心：复用极其成功的简答指令 Suffix
+    vqa_med_2019_instruction_suffix: str = (
         "Answer the question briefly and directly based on the image. Use a short medical term or phrase when possible. "
         "For yes/no questions, answer with yes or no. Do not add unnecessary explanation."
     )
@@ -40,55 +43,54 @@ class Stage2TrainConfig:
     torch_dtype: str = "bfloat16"
     attn_implementation: str = "flash_attention_2"
 
-    # BioMedCLIP 本地绝对路径 (OpenCLIP 格式)
+    # BioMedCLIP 本地绝对路径
     biomedclip_path: str = "/home/yuqing/Models/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224"
-    # 【新增】：明确指定架构名称，BiomedCLIP 基于 ViT-B-16
     biomedclip_model_name: str = "ViT-B-16"
 
     # =========================================================
     # ✨ 核心创新点：视觉端 (Vision) 的残差适配器
     # =========================================================
-    visual_adapter_hidden_dim: int = 4096  # Qwen3-VL-8B 探测出的真实视觉-语言对齐维度
+    visual_adapter_hidden_dim: int = 4096
     visual_adapter_r: int = 16
-    # 【新增】多尺度 Visual Adapter 与 Router 专属配置
-    # router_mode: str = "dynamic"  # 可选: "dynamic" 或 "fixed"
-    router_mode: str = "fixed"  # 可选: "dynamic" 或 "fixed"
+
+    router_mode: str = "dynamic"  # 切换为 fixed 或 dynamic
     global_adapter_kernel_size: int = 1
     local_adapter_kernel_size: int = 3
     region_adapter_kernel_size: int = 5
-    #  新增：当 router_mode="fixed" 时的硬融合比例
+
     fixed_weights: list[float] = field(default_factory=lambda: [0.33, 0.33, 0.34])
-    # 🚀 【新增】全局 MoE 残差缩放因子，对齐 Single Adapter 的强度
-    moe_alpha: float = 0 #0.1 #0.2 #0.3 #0.4 #0.7 #0.8 #0.5 #0.6 #0.9 #1
-    
+
+    # 🚀 你的 8 卡消融核心变量
+    moe_alpha: float = 1 #0.7 #0.6 #0.5 #0.4 #0.3 #0.1 #0
+
     # --- 4. LoRA 配置 ---
     lora_r: int = 64
     lora_alpha: int = 128
     lora_dropout: float = 0.05
     lora_target_modules: list[str] = field(
         default_factory=lambda: [
-            "q_proj",
-            "k_proj",
-            "v_proj",
-            "o_proj",
-            "gate_proj",
-            "up_proj",
-            "down_proj",
+            "q_proj", "k_proj", "v_proj", "o_proj",
+            "gate_proj", "up_proj", "down_proj",
         ]
     )
 
-    # --- 5. 训练超参数 (针对 VQA-RAD 小数据集微调) ---
+    # --- 5. 训练超参数 ---
+    # ⚠️ VQA-MED 的训练集近 1.3w 条，与 SLAKE 规模相当，这里沿用 SLAKE 的最佳设定
     per_device_train_batch_size: int = 4
     gradient_accumulation_steps: int = 2
-    num_train_epochs: float = 5.0  # VQA-RAD 数据量小，Epoch 适当拉大
-    learning_rate: float = 1e-5  # 学习率比 Stage 1 略低，防止冲刷已有知识
+    num_train_epochs: float = 3.0
+    learning_rate: float = 1e-5
     weight_decay: float = 0.01
     lr_scheduler_type: str = "cosine"
-    warmup_steps: int = 50  # 相应缩短 warmup
+
+    warmup_steps: int = 100
     max_grad_norm: float = 1.0
     logging_steps: int = 10
-    save_steps: int = 200 # 每隔 200 步保存一次
-    save_total_limit: int = 500 #上限拉高，保存所有checkpoint
+
+    # ⚠️ 1.3w 数据量，500步一存是个好选择
+    save_steps: int = 500
+    save_total_limit: int = 500
+
     gradient_checkpointing: bool = True
     dataloader_num_workers: int = 8
 
@@ -96,7 +98,6 @@ class Stage2TrainConfig:
         if self.attn_implementation == "flash_attention_2" and self.torch_dtype != "bfloat16":
             print("⚠️ Warning: flash_attention_2 is best paired with bfloat16!")
 
-        # 🚀 1. 根据 router_mode 提取基础路径 (千万不要在这里提前拼接 final_weights)
         if self.router_mode == "dynamic":
             base_output_dir = self.output_dir_with_visual_adapter_dynamic
             base_stage1_dir = self.stage1_output_dir_with_visual_adapter_dynamic
@@ -104,20 +105,14 @@ class Stage2TrainConfig:
             base_output_dir = self.output_dir_with_visual_adapter_fixed
             base_stage1_dir = self.stage1_output_dir_with_visual_adapter_fixed
         else:
-            raise ValueError(f"❌ 不支持的 router_mode: {self.router_mode}，只能是 'dynamic' 或 'fixed'")
+            raise ValueError(f"❌ 不支持的 router_mode: {self.router_mode}")
 
-        # 🚀 2. 给 Stage 2 的输出路径动态追加 Alpha 后缀
         self.output_dir = f"{base_output_dir}_Alpha_{self.moe_alpha}"
-
-        # 🚀 3. 给 Stage 1 的读取路径追加 Alpha 后缀，然后再在最末端拼接 "final_weights"
         stage1_alpha_dir = f"{base_stage1_dir}_Alpha_{self.moe_alpha}"
         self.stage1_weights_dir = os.path.join(stage1_alpha_dir, "final_weights")
 
-        # =========================================================
-        # 🖨️ 新增：打印最终生成的路径，方便终端核对
-        # =========================================================
         print("\n" + "=" * 60)
-        print(f"⚙️ [Stage 2 Train Config] 初始化完成 | 模式: {self.router_mode.upper()} | Alpha: {self.moe_alpha}")
+        print(f"⚙️ [Stage 2 Train Config] VQA-MED-2019 | 模式: {self.router_mode.upper()} | Alpha: {self.moe_alpha}")
         print(f"📂 读取 Stage 1 权重: {self.stage1_weights_dir}")
         print(f"💾 训练结果输出目录: {self.output_dir}")
         print("=" * 60 + "\n")

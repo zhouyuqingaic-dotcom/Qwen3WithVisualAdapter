@@ -50,7 +50,7 @@ class Stage2EvalConfig:
     # 🚀 与 Train Config 绝对对齐的硬融合比例
     fixed_weights: list[float] = field(default_factory=lambda: [0.33, 0.33, 0.34])
     # 🚀 【新增】全局 MoE 残差缩放因子，对齐 Single Adapter 的强度
-    moe_alpha: float = 1 #0.9 #0.8 #0.2 #0.1
+    moe_alpha: float = 0.1 #0.7 #0.5 #0.4 #0.3 #0.1
 
     # --- 5. 评测与生成参数 (Generation Config) ---
     max_new_tokens: int = 64
@@ -82,3 +82,12 @@ class Stage2EvalConfig:
         # 这样你的寻宝脚本 os.path.dirname(config.stage2_weights_dir) 就能精准定位到 Alpha 专属的目录
         stage2_alpha_dir = f"{base_stage2_dir}_Alpha_{self.moe_alpha}"
         self.stage2_weights_dir = os.path.join(stage2_alpha_dir, "final_weights")
+
+        # =========================================================
+        # 🖨️ 新增：打印最终生成的路径，方便终端核对
+        # =========================================================
+        print("\n" + "=" * 60)
+        print(f"🔬 [Stage 2 Eval Config] 初始化完成 | 模式: {self.router_mode.upper()} | Alpha: {self.moe_alpha}")
+        print(f"📂 读取 Stage 2 权重: {self.stage2_weights_dir}")
+        print(f"📊 评测结果输出目录: {self.output_dir}")
+        print("=" * 60 + "\n")
