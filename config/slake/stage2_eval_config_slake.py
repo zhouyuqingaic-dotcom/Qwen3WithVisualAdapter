@@ -27,6 +27,7 @@ class Stage2EvalConfig:
 
     # --- 2. 数据集配置 (指向 SLAKE 测试集) ---
     slake_test_json_path: str = "/home/yuqing/Datas/SLAKE/Slake1.0/test.json"
+    slake_val_json_path: str = "/home/yuqing/Datas/SLAKE/Slake1.0/validate.json"
     slake_image_root: str = "/home/yuqing/Datas/SLAKE/Slake1.0/imgs"
     slake_max_size: int = 1024
 
@@ -54,7 +55,7 @@ class Stage2EvalConfig:
     fixed_weights: list[float] = field(default_factory=lambda: [0.333, 0.333, 0.334])
 
     # 🚀 【核心锁死】需要评测哪组 Alpha 就填哪组，这里默认填
-    moe_alpha: float = 1 #0 #1 #0.1 #0 #0.2 #0.7 #0.3 #0.4 #0.5 #0.6 #0.8 #0.9 #1
+    moe_alpha: float = 0 #0.3 #0.2 #0.3 #0.4 #0.5 #0.6 #0.7 #0.8 #0.9 #1 #0 #1 #0.1 #0 #0.2 #0.7 #0.3 #0.4 #0.5 #0.6 #0.8 #0.9 #1
 
     # --- 5. 评测与生成参数 (Generation Config) ---
     max_new_tokens: int = 64

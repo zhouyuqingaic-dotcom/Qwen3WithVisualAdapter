@@ -16,7 +16,7 @@ class Stage2TrainConfig:
     stage1_output_dir_with_visual_adapter_fixed: str = "/home/yuqing/Models/RouterB_Plus_MoA/with_visual_adapter_fixed"
 
     print_rank: int = 0
-    seed: int = 1912 #1024 #2048 #1024 #1912
+    seed: int = 2048 #1024 #1912 #1024 #2048 #1024 #1912
 
     # --- 2. SLAKE 数据集配置 ---
     slake_train_json_path: str = "/home/yuqing/Datas/SLAKE/Slake1.0/train.json"
@@ -58,7 +58,7 @@ class Stage2TrainConfig:
     fixed_weights: list[float] = field(default_factory=lambda: [0.333, 0.333, 0.334])
 
     # 🚀 【核心锁死】直接将 VQA-RAD 上推导出的通用物理边界 迁移过来！
-    moe_alpha: float = 1 #0 #0.7 #0.3 #0.2 #0.1 #0.4 #0.6 #0.5 #0.8 #0.9 #1
+    moe_alpha: float = 0 #0.3 #1 #0.9 #0.8 #0.7 #0.6 #0.5 #0.4 #0.3 #0.2 #0.1
 
     # --- 4. LoRA 配置 ---
     lora_r: int = 64

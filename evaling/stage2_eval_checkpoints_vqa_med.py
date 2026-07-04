@@ -268,10 +268,10 @@ def main():
         biomed_extractor, biomed_transform, biomed_tokenizer = load_biomedclip(cfg.biomedclip_path)
 
     # 🚀 更换为 VQA-MED 数据集
-    test_dataset = VQAMED2019Dataset(data_path=cfg.vqa_med_2019_test_data_path,
-                                     image_root=cfg.vqa_med_2019_test_image_root)
-    eval_collator = VQAMED2019EvalCollator(processor, cfg, biomed_transform, biomed_tokenizer)
-    test_loader = DataLoader(test_dataset, batch_size=cfg.per_device_eval_batch_size, collate_fn=eval_collator,
+    val_dataset = VQAMED2019Dataset(data_path=cfg.vqa_med_2019_val_data_path,
+                                     image_root=cfg.vqa_med_2019_val_image_root)
+    val_collator = VQAMED2019EvalCollator(processor, cfg, biomed_transform, biomed_tokenizer)
+    val_loader = DataLoader(val_dataset, batch_size=cfg.per_device_eval_batch_size, collate_fn=val_collator,
                              num_workers=cfg.dataloader_num_workers, shuffle=False)
 
     llm_cfg = LLMAPIConfig()
@@ -281,7 +281,7 @@ def main():
     results = []
     for cp_path in checkpoint_dirs:
         res = evaluate_single_checkpoint(
-            cp_path, loader, processor, cfg, test_loader, llm_client, llm_cfg, biomed_extractor=biomed_extractor
+            cp_path, loader, processor, cfg, val_loader, llm_client, llm_cfg, biomed_extractor=biomed_extractor
         )
         if res: results.append(res)
 

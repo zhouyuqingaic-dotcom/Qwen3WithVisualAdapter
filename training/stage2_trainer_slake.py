@@ -106,7 +106,8 @@ def main():
     )
 
     # 施加黑魔法：拼装成将近 1.2 万条数据的训练集
-    train_dataset = ConcatDataset([train_subset, val_subset])
+    # train_dataset = ConcatDataset([train_subset, val_subset])
+    train_dataset = ConcatDataset([train_subset,val_subset])
     ddp_print(f"✅ 数据集缝合完成，共有 {len(train_dataset)} 条高纯度医学样本！", print_rank=cfg.print_rank)
 
     # ==========================================

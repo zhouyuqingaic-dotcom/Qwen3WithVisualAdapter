@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 class Stage2EvalConfig:
     """Stage 2 (VQA-MED-2019) 终极评测配置类"""
 
-    router_mode: str = "fixed"
+    router_mode: str = "fixed" #"dynamic" #"dynamic" #"fixed"
 
     # ⚠️ 读取 Stage 2 (VQA-MED-2019) 训练完的最终权重目录
     stage2_weights_dynamic: str = "/home/yuqing/Models/RouterB_Plus_MoA/Stage2_VQA_MED_2019/dynamic/final_weights"
@@ -21,6 +21,10 @@ class Stage2EvalConfig:
     # --- 2. 数据集配置 (指向带真实答案的 Test 集！) ---
     vqa_med_2019_test_data_path: str = "/home/yuqing/Datas/VQA-Med-2019/test/VQAMed2019Test/VQAMed2019_Test_Questions_w_Ref_Answers.txt"
     vqa_med_2019_test_image_root: str = "/home/yuqing/Datas/VQA-Med-2019/test/VQAMed2019Test/Test_images"
+
+    vqa_med_2019_val_data_path: str = "/home/yuqing/Datas/VQA-Med-2019/val/ImageClef-2019-VQA-Med-Validation/QAPairsByCategory"
+    vqa_med_2019_val_image_root: str = "/home/yuqing/Datas/VQA-Med-2019/val/ImageClef-2019-VQA-Med-Validation/Val_images"
+
     vqa_med_2019_max_size: int = 1024
 
     # --- 3. 模型底座与量化 ---
@@ -42,9 +46,11 @@ class Stage2EvalConfig:
     global_adapter_kernel_size: int = 1
     local_adapter_kernel_size: int = 3
     region_adapter_kernel_size: int = 5
-    fixed_weights: list[float] = field(default_factory=lambda: [0.33, 0.33, 0.34])
+    fixed_weights: list[float] = field(default_factory=lambda: [0.333, 0.333, 0.334])
 
-    moe_alpha: float = 0 #0.9 #0.8 #0.7 #0.6 #0.5 #0.4 #0.3 #0.2 #0.1 # 需要测哪个 Alpha 就改哪个
+    moe_alpha: float = 0 #0.9 #0.9 #1 #0 #1 #0.9 #1 #0.9 #0.8 #0 #0.7 #0.6 #0.5 #0.4 #0.3 #0.2 #0.1
+
+    seed=1024 #2048 #1024 #1024 #2048 #1024 #2048 #1024 #1912
 
     # --- 5. 评测与生成参数 ---
     max_new_tokens: int = 64
@@ -53,28 +59,56 @@ class Stage2EvalConfig:
     per_device_eval_batch_size: int = 4
     dataloader_num_workers: int = 4
 
-    def __post_init__(self):
-        # 1. 基础目录定义
-        base_eval_dir = "/home/yuqing/Models/RouterB_Plus_MoA/eval_results_vqa_med_2019"
-        base_stage2_dynamic = "/home/yuqing/Models/RouterB_Plus_MoA/Stage2_VQA_MED_2019/dynamic"
-        base_stage2_fixed = "/home/yuqing/Models/RouterB_Plus_MoA/Stage2_VQA_MED_2019/fixed"
+    # def __post_init__(self):
+    #     # 1. 基础目录定义
+    #     base_eval_dir = "/home/yuqing/Models/RouterB_Plus_MoA/eval_results_vqa_med_2019"
+    #     base_stage2_dynamic = "/home/yuqing/Models/RouterB_Plus_MoA/Stage2_VQA_MED_2019/dynamic"
+    #     base_stage2_fixed = "/home/yuqing/Models/RouterB_Plus_MoA/Stage2_VQA_MED_2019/fixed"
+    #
+    #     # 2. 根据 router_mode 提取基础路径
+    #     if self.router_mode == "dynamic":
+    #         base_output_dir = os.path.join(base_eval_dir, "dynamic")
+    #         base_stage2_dir = base_stage2_dynamic
+    #     elif self.router_mode == "fixed":
+    #         base_output_dir = os.path.join(base_eval_dir, "fixed")
+    #         base_stage2_dir = base_stage2_fixed
+    #     else:
+    #         raise ValueError(f"❌ 不支持的 router_mode: {self.router_mode}")
+    #
+    #     self.output_dir = f"{base_output_dir}_Alpha_{self.moe_alpha}"
+    #     stage2_alpha_dir = f"{base_stage2_dir}_Alpha_{self.moe_alpha}"
+    #     self.stage2_weights_dir = os.path.join(stage2_alpha_dir, "final_weights")
+    #
+    #     print("\n" + "=" * 60)
+    #     print(f"🔬 [Stage 2 Eval Config] VQA-MED-2019 | 模式: {self.router_mode.upper()} | Alpha: {self.moe_alpha}")
+    #     print(f"📂 读取 Stage 2 权重: {self.stage2_weights_dir}")
+    #     print(f"📊 评测结果输出目录: {self.output_dir}")
+    #     print("=" * 60 + "\n")
 
-        # 2. 根据 router_mode 提取基础路径
+    def __post_init__(self):
+        if self.attn_implementation == "flash_attention_2" and self.torch_dtype != "bfloat16":
+            print("⚠️ Warning: flash_attention_2 is best paired with bfloat16!")
+
+        base_eval_dir = "/home/yuqing/Models/RouterB_Plus_MoA/eval_results_vqa_med_2019"
+        base_stage2_dir = "/home/yuqing/Models/RouterB_Plus_MoA/Stage2_VQA_MED_2019"
+
+        alpha_str = f"{self.moe_alpha:g}"
+
         if self.router_mode == "dynamic":
-            base_output_dir = os.path.join(base_eval_dir, "dynamic")
-            base_stage2_dir = base_stage2_dynamic
+            run_name = f"dynamic_Alpha_{alpha_str}_seed_{self.seed}"
         elif self.router_mode == "fixed":
-            base_output_dir = os.path.join(base_eval_dir, "fixed")
-            base_stage2_dir = base_stage2_fixed
+            run_name = f"fixed_Alpha_{alpha_str}_seed_{self.seed}"
         else:
             raise ValueError(f"❌ 不支持的 router_mode: {self.router_mode}")
 
-        self.output_dir = f"{base_output_dir}_Alpha_{self.moe_alpha}"
-        stage2_alpha_dir = f"{base_stage2_dir}_Alpha_{self.moe_alpha}"
-        self.stage2_weights_dir = os.path.join(stage2_alpha_dir, "final_weights")
+        self.output_dir = os.path.join(base_eval_dir, run_name)
+        self.stage2_weights_dir = os.path.join(base_stage2_dir, run_name, "final_weights")
 
         print("\n" + "=" * 60)
-        print(f"🔬 [Stage 2 Eval Config] VQA-MED-2019 | 模式: {self.router_mode.upper()} | Alpha: {self.moe_alpha}")
+        print(
+            f"🔬 [Stage 2 Eval Config] VQA-MED-2019 | 模式: {self.router_mode.upper()} | "
+            f"Alpha: {self.moe_alpha} | Seed: {self.seed}"
+        )
         print(f"📂 读取 Stage 2 权重: {self.stage2_weights_dir}")
         print(f"📊 评测结果输出目录: {self.output_dir}")
         print("=" * 60 + "\n")

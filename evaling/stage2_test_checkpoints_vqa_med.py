@@ -1,6 +1,4 @@
 import os
-
-
 import glob
 import types
 import torch
@@ -8,15 +6,15 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 from peft import PeftModel
 
-# 1. 🚀 导入 SLAKE 专属配置与数据集
-from config.slake.stage2_eval_config_slake import Stage2EvalConfig
-from datas.slake_datasets import SLAKEDataset
+# 1. 🚀 导入 VQA-MED-2019 专属配置与数据集
+from config.vqa_med_2019.stage2_eval_config_vqa_med_2019 import Stage2EvalConfig
+from datas.vqa_med_2019_datasets import VQAMED2019Dataset
 
 from utils.qwen3vl.qwen3_vl_8B_quant_loader import Qwen3VLQuantizedLoader
 
-# 2. 🚀 导入 SLAKE 专属的 Eval Collator 和答案清洗器
-from utils.data_tools.collator.slake.slake_datasets_eval_collator import SLAKEEvalCollator
-from utils.data_tools.prompt_cleaning.slake_answer_cleaning import slake_answer_eval_cleaning
+# 2. 🚀 导入 VQA-MED-2019 专属的 Eval Collator 和答案清洗器
+from utils.data_tools.collator.vqa_med_2019.vqa_med_2019_eval_collator import VQAMED2019EvalCollator
+from utils.data_tools.prompt_cleaning.vqa_med_2019_answer_cleaning import vqa_med_2019_answer_eval_cleaning
 
 # 导入 MoE 的终极武器库
 from utils.qwen3vl.qwen3_vl_8B_visual_adapter import VisualAdapter_Global, VisualAdapter_Local, VisualAdapter_Region
@@ -26,6 +24,8 @@ from utils.biomedclip.biomed_clip_loader import load_biomedclip
 
 from config.LLM_config import LLMAPIConfig
 from LLM_api.gpt_5_mini import GPT5MiniClient
+
+# 💡 这里我们直接复用 SLAKE 极其成熟的 LLM 裁判提取逻辑 (因为都是简答题校验)
 from LLM_api.prompts.slake_prompt_builder_gpt_5_mini import build_llm_judge_user_prompt, parse_llm_judge_response
 
 
@@ -123,7 +123,16 @@ def evaluate_single_checkpoint(weights_path, loader, processor, cfg, test_loader
     model.eval()
 
     # ================= Phase 1: 本地推理 =================
-    metrics = {"total": 0, "norm_match": 0, "closed_total": 0, "closed_correct": 0, "open_total": 0, "open_correct": 0}
+    # 🚀 增加 VQA-MED-2019 专属的四大类目追踪器
+    metrics = {
+        "total": 0, "norm_match": 0,
+        "closed_total": 0, "closed_correct": 0,
+        "open_total": 0, "open_correct": 0,
+        "Modality_total": 0, "Modality_correct": 0,
+        "Plane_total": 0, "Plane_correct": 0,
+        "Organ_total": 0, "Organ_correct": 0,
+        "Abnormality_total": 0, "Abnormality_correct": 0,
+    }
     all_records = []
 
     with torch.no_grad():
@@ -153,24 +162,31 @@ def evaluate_single_checkpoint(weights_path, loader, processor, cfg, test_loader
             for i, raw_pred in enumerate(output_texts):
                 meta = metadata_list[i]
 
-                # 🚀 兼容 SLAKE 数据集的字典键名
-                gt_raw = meta.get("gt_answer", meta.get("answer", ""))
-
+                gt_raw = meta.get("gt_answer", "")
                 ans_type = meta.get("answer_type", "").strip().upper()
+                q_type = meta.get("question_type", "UNKNOWN")  # Modality, Plane, Organ, Abnormality
                 is_closed_question = (ans_type == "CLOSED")
 
-                pred_norm = slake_answer_eval_cleaning(raw_pred)
-                gt_norm = slake_answer_eval_cleaning(gt_raw)
+                # 🚀 替换为 VQA-MED-2019 专属清洗器
+                pred_norm = vqa_med_2019_answer_eval_cleaning(raw_pred)
+                gt_norm = vqa_med_2019_answer_eval_cleaning(gt_raw)
                 is_norm = (pred_norm == gt_norm)
 
                 metrics["total"] += 1
                 if is_norm: metrics["norm_match"] += 1
+
+                # 统计 Open / Closed
                 if is_closed_question:
                     metrics["closed_total"] += 1
                     if is_norm: metrics["closed_correct"] += 1
                 else:
                     metrics["open_total"] += 1
                     if is_norm: metrics["open_correct"] += 1
+
+                # 🚀 统计四大类别精度
+                if q_type in ["Modality", "Plane", "Organ", "Abnormality"]:
+                    metrics[f"{q_type}_total"] += 1
+                    if is_norm: metrics[f"{q_type}_correct"] += 1
 
                 all_records.append({
                     "question": meta["question"], "gt_raw": gt_raw, "gt_norm": gt_norm,
@@ -187,12 +203,13 @@ def evaluate_single_checkpoint(weights_path, loader, processor, cfg, test_loader
     semantic_rescued_relaxed = 0
 
     for record in tqdm(all_records, desc="LLM Judging"):
+        # 仅对 Open 题且表面字符不匹配的执行语义抢救
         if record["question_category"] == "open" and not record["is_norm_match"]:
             user_prompt = build_llm_judge_user_prompt(
                 question=record["question"], gt_raw=record["gt_raw"], gt_norm=record["gt_norm"],
                 pred_raw=record["pred_raw"], pred_norm=record["pred_norm"]
             )
-            # 🚀 直接复用 VQA-RAD 的系统提示词
+            # 复用基础配置里的医学法官 Prompt
             raw_response = llm_client.ask(llm_cfg.vqa_rad_llm_judge_system_prompt, user_prompt, temperature=0.0)
             parsed_result = parse_llm_judge_response(raw_response)
 
@@ -210,7 +227,12 @@ def evaluate_single_checkpoint(weights_path, loader, processor, cfg, test_loader
         "checkpoint": os.path.basename(weights_path),
         "closed_acc": metrics["closed_correct"] / metrics["closed_total"] if metrics["closed_total"] else 0,
         "open_strict_acc": open_semantic_strict_correct / metrics["open_total"] if metrics["open_total"] else 0,
-        "overall_strict_acc": overall_strict_acc
+        "overall_strict_acc": overall_strict_acc,
+        "modality_acc": metrics["Modality_correct"] / metrics["Modality_total"] if metrics["Modality_total"] else 0,
+        "plane_acc": metrics["Plane_correct"] / metrics["Plane_total"] if metrics["Plane_total"] else 0,
+        "organ_acc": metrics["Organ_correct"] / metrics["Organ_total"] if metrics["Organ_total"] else 0,
+        "abnormality_acc": metrics["Abnormality_correct"] / metrics["Abnormality_total"] if metrics[
+            "Abnormality_total"] else 0,
     }
 
 
@@ -229,7 +251,7 @@ def main():
         print(f"❌ 在 {base_weight_dir} 下没有找到任何 checkpoint 文件夹！")
         return
 
-    print(f"🔍 SLAKE 寻宝启动！评测模式: [MoE {cfg.router_mode.upper()}] | 共发现 {len(checkpoint_dirs)} 个节点：")
+    print(f"🔍 VQA-MED-2019 寻宝启动！评测模式: [MoE {cfg.router_mode.upper()}] | 共发现 {len(checkpoint_dirs)} 个节点：")
     for cp in checkpoint_dirs: print(f"  - {os.path.basename(cp)}")
 
     loader = Qwen3VLQuantizedLoader(
@@ -245,9 +267,11 @@ def main():
     if cfg.router_mode == "dynamic":
         biomed_extractor, biomed_transform, biomed_tokenizer = load_biomedclip(cfg.biomedclip_path)
 
-    eval_dataset = SLAKEDataset(json_path=cfg.slake_val_json_path, image_root=cfg.slake_image_root)
-    eval_collator = SLAKEEvalCollator(processor, cfg, biomed_transform, biomed_tokenizer)
-    eval_loader = DataLoader(eval_dataset, batch_size=cfg.per_device_eval_batch_size, collate_fn=eval_collator,
+    # 🚀 更换为 VQA-MED 数据集
+    test_dataset = VQAMED2019Dataset(data_path=cfg.vqa_med_2019_test_data_path,
+                                     image_root=cfg.vqa_med_2019_test_image_root)
+    test_collator = VQAMED2019EvalCollator(processor, cfg, biomed_transform, biomed_tokenizer)
+    test_loader = DataLoader(test_dataset, batch_size=cfg.per_device_eval_batch_size, collate_fn=test_collator,
                              num_workers=cfg.dataloader_num_workers, shuffle=False)
 
     llm_cfg = LLMAPIConfig()
@@ -257,17 +281,18 @@ def main():
     results = []
     for cp_path in checkpoint_dirs:
         res = evaluate_single_checkpoint(
-            cp_path, loader, processor, cfg, eval_loader, llm_client, llm_cfg, biomed_extractor=biomed_extractor
+            cp_path, loader, processor, cfg, test_loader, llm_client, llm_cfg, biomed_extractor=biomed_extractor
         )
         if res: results.append(res)
 
-    print("\n\n" + "🏆" * 20 + " SLAKE 寻宝结果 (Leaderboard) " + "🏆" * 20)
+    print("\n\n" + "🏆" * 20 + " VQA-MED-2019 寻宝结果 (Leaderboard) " + "🏆" * 20)
+    # 🚀 排版极其豪华的 8 列 Markdown 评测表
     print(
-        f"| 评测节点 (模式: {cfg.router_mode.upper()}) | Closed Acc (Yes/No) | Open Acc (Strict) | Overall Strict Acc |")
-    print("| :--- | :---: | :---: | :---: |")
+        f"| 评测节点 (Alpha: {cfg.moe_alpha}) | Modality | Plane | Organ | Abnormality | Closed | Open (Strict) | Overall |")
+    print("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |")
     for res in results:
         print(
-            f"| {res['checkpoint']} | {res['closed_acc']:.2%} | {res['open_strict_acc']:.2%} | {res['overall_strict_acc']:.2%} |")
+            f"| {res['checkpoint']} | {res['modality_acc']:.2%} | {res['plane_acc']:.2%} | {res['organ_acc']:.2%} | {res['abnormality_acc']:.2%} | {res['closed_acc']:.2%} | {res['open_strict_acc']:.2%} | **{res['overall_strict_acc']:.2%}** |")
 
     best_overall = max(results, key=lambda x: x["overall_strict_acc"])
     print(f"\n🎯 恭喜！找到黄金节点：**{best_overall['checkpoint']}** (Overall: {best_overall['overall_strict_acc']:.2%})")

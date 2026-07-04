@@ -245,9 +245,9 @@ def main():
     if cfg.router_mode == "dynamic":
         biomed_extractor, biomed_transform, biomed_tokenizer = load_biomedclip(cfg.biomedclip_path)
 
-    eval_dataset = SLAKEDataset(json_path=cfg.slake_val_json_path, image_root=cfg.slake_image_root)
-    eval_collator = SLAKEEvalCollator(processor, cfg, biomed_transform, biomed_tokenizer)
-    eval_loader = DataLoader(eval_dataset, batch_size=cfg.per_device_eval_batch_size, collate_fn=eval_collator,
+    test_dataset = SLAKEDataset(json_path=cfg.slake_test_json_path, image_root=cfg.slake_image_root)
+    test_collator = SLAKEEvalCollator(processor, cfg, biomed_transform, biomed_tokenizer)
+    test_loader = DataLoader(test_dataset, batch_size=cfg.per_device_eval_batch_size, collate_fn=test_collator,
                              num_workers=cfg.dataloader_num_workers, shuffle=False)
 
     llm_cfg = LLMAPIConfig()
@@ -257,7 +257,7 @@ def main():
     results = []
     for cp_path in checkpoint_dirs:
         res = evaluate_single_checkpoint(
-            cp_path, loader, processor, cfg, eval_loader, llm_client, llm_cfg, biomed_extractor=biomed_extractor
+            cp_path, loader, processor, cfg, test_loader, llm_client, llm_cfg, biomed_extractor=biomed_extractor
         )
         if res: results.append(res)
 
