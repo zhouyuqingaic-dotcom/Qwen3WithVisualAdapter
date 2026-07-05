@@ -6,9 +6,9 @@ class LLMAPIConfig:
     """大语言模型 (LLM) API 与裁判 Prompt 统一配置类"""
 
     # --- 1. API 基础配置 ---
-    base_url: str = "https://api.agicto.cn/v1"
-    gpt_5_mini_key: str = "sk-TxaISCcsFS96byD3gv2UMdPbfzZ1ovdqiq17mxCoKYSedoqH"
-    judge_model_name: str = "gpt-5-mini"
+    base_url: str = os.environ.get("GPT_5_MINI_BASE_URL", "https://api.agicto.cn/v1")
+    gpt_5_mini_key: str = os.environ.get("GPT_5_MINI_API_KEY", "")
+    judge_model_name: str = os.environ.get("GPT_5_MINI_MODEL", "gpt-5-mini")
 
     # --- 2. VQA-RAD 专属 LLM 裁判 Prompt ---
     #以 Norm 为主，Raw 为辅，且强调了医学上的致命错误不能宽容。
