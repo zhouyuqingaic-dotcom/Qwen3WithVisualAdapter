@@ -12,6 +12,16 @@ Repository branch used for the manuscript:
 feat/multi-scale-visual-adapter-router
 ```
 
+## Framework Architecture
+
+<p align="center">
+  <img src="./framework_V2.png" alt="RoMA-Net Framework Architecture" width="100%">
+</p>
+
+<p align="center">
+  <em>Overall architecture of RoMA-Net.</em>
+</p>
+
 Repository URL:
 
 ```text
